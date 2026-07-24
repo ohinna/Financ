@@ -282,12 +282,15 @@ export default function FinancesApp() {
 
   const primaryCurrency = Object.keys(totalsByCurrency)[0] || (pockets[0]?.currency) || "BRL";
 
-  const totalLimit = pockets
-    .filter((p) => (p.currency || "BRL") === primaryCurrency)
-    .reduce((s, p) => s + Number(p.limit || 0), 0);
-  const totalSpentPrimary = totalsByCurrency[primaryCurrency] || 0;
+  const totalLimit = primaryPocket
+    ? Number(primaryPocket.limit || 0)
+    : pockets.filter((p) => (p.currency || "BRL") === primaryCurrency).reduce((s, p) => s + Number(p.limit || 0), 0);
+  const totalSpentPrimary = primaryPocket
+    ? spentForPocket(primaryPocket.id)
+    : (totalsByCurrency[primaryCurrency] || 0);
   const overallPct = totalLimit > 0 ? Math.min(100, (totalSpentPrimary / totalLimit) * 100) : null;
   const overallRemaining = totalLimit - totalSpentPrimary;
+  const overallCurrency = primaryPocket ? (primaryPocket.currency || "BRL") : primaryCurrency;
 
   const filteredMonthTx = useMemo(() => {
     if (selectedCategories.length === 0) return pocketFilteredMonthTx;
@@ -602,9 +605,10 @@ export default function FinancesApp() {
               <div className="flex justify-between mb-1">
                 <p className="text-[10px]" style={{ color: `${COLORS.paper}90` }}>
                   você já gastou <span className="font-mono" style={{ color: COLORS.brassSoft }}>{Math.round(overallPct)}%</span> do seu limite
+                  {primaryPocket ? ` de ${money(totalLimit, overallCurrency)} (${primaryPocket.name})` : ""}
                 </p>
                 <p className="font-mono text-[10px]" style={{ color: `${COLORS.paper}90` }}>
-                  {overallRemaining >= 0 ? `faltam ${money(overallRemaining, primaryCurrency)}` : `estourou ${money(Math.abs(overallRemaining), primaryCurrency)}`}
+                  {overallRemaining >= 0 ? `faltam ${money(overallRemaining, overallCurrency)}` : `estourou ${money(Math.abs(overallRemaining), overallCurrency)}`}
                 </p>
               </div>
               <div className="w-full h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.12)" }}>
