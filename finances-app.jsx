@@ -282,6 +282,13 @@ export default function FinancesApp() {
 
   const primaryCurrency = Object.keys(totalsByCurrency)[0] || (pockets[0]?.currency) || "BRL";
 
+  const totalLimit = pockets
+    .filter((p) => (p.currency || "BRL") === primaryCurrency)
+    .reduce((s, p) => s + Number(p.limit || 0), 0);
+  const totalSpentPrimary = totalsByCurrency[primaryCurrency] || 0;
+  const overallPct = totalLimit > 0 ? Math.min(100, (totalSpentPrimary / totalLimit) * 100) : null;
+  const overallRemaining = totalLimit - totalSpentPrimary;
+
   const filteredMonthTx = useMemo(() => {
     if (selectedCategories.length === 0) return pocketFilteredMonthTx;
     return pocketFilteredMonthTx.filter((t) => selectedCategories.includes(t.category));
@@ -559,6 +566,17 @@ export default function FinancesApp() {
 
         {/* total + trend + average + days left + week dots, all in one card */}
         <div className="rounded-2xl p-4 mt-2 mb-3" style={{ background: `linear-gradient(135deg, ${COLORS.panel}, ${COLORS.panelSoft})` }}>
+          {daysLeftInMonth !== null && (
+            <div className="flex items-center gap-1.5 mb-3 rounded-lg px-2.5 py-1.5" style={{ background: "rgba(255,255,255,0.1)" }}>
+              <Calendar size={12} color={COLORS.brassSoft} />
+              <p className="font-mono text-[10px]" style={{ color: `${COLORS.paper}D0` }}>
+                {activeCycle
+                  ? `faltam ${daysLeftInMonth} ${daysLeftInMonth === 1 ? "dia" : "dias"} pra fatura do ${primaryPocket.name} fechar`
+                  : `faltam ${daysLeftInMonth} ${daysLeftInMonth === 1 ? "dia" : "dias"} pro fim do mês`}
+              </p>
+            </div>
+          )}
+
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px]" style={{ color: `${COLORS.paper}80` }}>total do mês</p>
@@ -579,21 +597,47 @@ export default function FinancesApp() {
             </div>
           </div>
 
-          {daysLeftInMonth !== null && (
-            <div className="flex items-center gap-1.5 mt-3 rounded-lg px-2.5 py-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
-              <Calendar size={12} color={COLORS.brassSoft} />
-              <p className="font-mono text-[10px]" style={{ color: `${COLORS.paper}B0` }}>
-                {activeCycle
-                  ? `faltam ${daysLeftInMonth} ${daysLeftInMonth === 1 ? "dia" : "dias"} pra fatura do ${primaryPocket.name} fechar`
-                  : `faltam ${daysLeftInMonth} ${daysLeftInMonth === 1 ? "dia" : "dias"} pro fim do mês`}
-              </p>
+          {overallPct !== null && (
+            <div className="mt-3">
+              <div className="flex justify-between mb-1">
+                <p className="text-[10px]" style={{ color: `${COLORS.paper}90` }}>
+                  você já gastou <span className="font-mono" style={{ color: COLORS.brassSoft }}>{Math.round(overallPct)}%</span> do seu limite
+                </p>
+                <p className="font-mono text-[10px]" style={{ color: `${COLORS.paper}90` }}>
+                  {overallRemaining >= 0 ? `faltam ${money(overallRemaining, primaryCurrency)}` : `estourou ${money(Math.abs(overallRemaining), primaryCurrency)}`}
+                </p>
+              </div>
+              <div className="w-full h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.12)" }}>
+                <div className="h-full rounded-full" style={{ width: `${overallPct}%`, background: overallRemaining < 0 ? COLORS.rust : COLORS.brass }} />
+              </div>
             </div>
           )}
-          {activeCycle && (
-            <p className="text-[10px] mt-1.5" style={{ color: `${COLORS.paper}70` }}>
-              vendo o ciclo de {activeCycle.start.split("-").reverse().join("/")} a {activeCycle.end.split("-").reverse().join("/")}, seguindo o fechamento do {primaryPocket.name}
-            </p>
-          )}
+
+          {activeCycle && (() => {
+            const startD = new Date(activeCycle.start);
+            const endD = new Date(activeCycle.end);
+            const totalDays = Math.round((endD - startD) / 86400000) + 1;
+            const elapsed = Math.min(totalDays, Math.max(0, Math.round((today - startD) / 86400000) + 1));
+            const pct = Math.min(100, Math.max(0, (elapsed / totalDays) * 100));
+            return (
+              <div className="mt-3">
+                <div className="w-full h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.12)" }}>
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: COLORS.brassSoft }} />
+                </div>
+                <div className="flex justify-between mt-1">
+                  <span className="font-mono text-[9px]" style={{ color: `${COLORS.paper}70` }}>
+                    {activeCycle.start.split("-").reverse().join("/")}
+                  </span>
+                  <span className="text-[9px]" style={{ color: `${COLORS.paper}70` }}>
+                    ciclo do {primaryPocket.name}
+                  </span>
+                  <span className="font-mono text-[9px]" style={{ color: `${COLORS.paper}70` }}>
+                    {activeCycle.end.split("-").reverse().join("/")}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
           <button onClick={() => setWeekChartClicked((v) => !v)} className="w-full flex justify-between items-center mt-3" aria-label="Ver total da semana">
             {weekChart.days.map((d, i) => (
