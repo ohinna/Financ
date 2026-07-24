@@ -490,6 +490,15 @@ export default function FinancesApp() {
           </p>
 
           {view === "dashboard" && (
+            <button onClick={goToToday} className="flex items-center gap-1.5 mb-2" aria-label="Ir pra hoje">
+              <Calendar size={11} color={COLORS.brassSoft} />
+              <span className="font-mono text-[11px]" style={{ color: COLORS.brassSoft }}>
+                hoje: {today.toLocaleDateString("pt-BR")}
+              </span>
+            </button>
+          )}
+
+          {view === "dashboard" && (
           <div className="relative mt-2">
             <div
               className="flex items-stretch rounded-xl overflow-hidden"
@@ -551,17 +560,6 @@ export default function FinancesApp() {
           )}
         </div>
 
-        {view === "dashboard" && !isCurrentMonth && (
-        <div className="max-w-4xl mx-auto mt-4 flex justify-end">
-            <button
-              onClick={goToToday}
-              className="text-xs font-medium rounded-full px-3 py-1.5"
-              style={{ background: COLORS.panelSoft, color: COLORS.brassSoft, border: `1px solid ${COLORS.brass}` }}
-            >
-              ir pra hoje
-            </button>
-        </div>
-        )}
       </div>
 
       {view === "dashboard" && (
@@ -612,7 +610,7 @@ export default function FinancesApp() {
                 </p>
               </div>
               <div className="w-full h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.12)" }}>
-                <div className="h-full rounded-full" style={{ width: `${overallPct}%`, background: overallRemaining < 0 ? COLORS.rust : COLORS.brass }} />
+                <div className="h-full rounded-full" style={{ width: `${overallPct}%`, background: overallRemaining < 0 ? COLORS.rust : (primaryPocket?.color || COLORS.brass) }} />
               </div>
             </div>
           )}
@@ -626,7 +624,7 @@ export default function FinancesApp() {
             return (
               <div className="mt-3">
                 <div className="w-full h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.12)" }}>
-                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: COLORS.brassSoft }} />
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: primaryPocket.color || COLORS.brassSoft }} />
                 </div>
                 <div className="flex justify-between mt-1">
                   <span className="font-mono text-[9px]" style={{ color: `${COLORS.paper}70` }}>
@@ -647,7 +645,7 @@ export default function FinancesApp() {
             {weekChart.days.map((d, i) => (
               <div key={i} className="flex flex-col items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full transition-all"
-                  style={{ background: d.total > 0 ? COLORS.brass : "rgba(255,255,255,0.25)" }} />
+                  style={{ background: d.total > 0 ? (primaryPocket?.color || COLORS.brass) : "rgba(255,255,255,0.25)" }} />
                 <span className="font-mono text-[9px]" style={{ color: `${COLORS.paper}60` }}>{d.label}</span>
               </div>
             ))}
