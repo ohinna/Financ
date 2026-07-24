@@ -179,6 +179,8 @@ export default function FinancesApp() {
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [selectedPockets, setSelectedPockets] = useState([]);
   const [weekChartClicked, setWeekChartClicked] = useState(false);
+  const [weekAnchorISO, setWeekAnchorISO] = useState(() => new Date().toISOString().slice(0, 10));
+  const [selectedDayISO, setSelectedDayISO] = useState(() => new Date().toISOString().slice(0, 10));
   const [quoteIndex, setQuoteIndex] = useState(0);
 
   useEffect(() => {
@@ -304,10 +306,11 @@ export default function FinancesApp() {
   }
 
   const WEEKDAY_LABELS = ["D", "S", "T", "Q", "Q", "S", "S"];
+  const WEEKDAY_NAMES = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
   const weekChart = useMemo(() => {
-    const base = isCurrentMonth ? today : new Date(year, month, 1);
-    const dow = base.getDay();
-    const sunday = new Date(base.getFullYear(), base.getMonth(), base.getDate() - dow);
+    const anchor = new Date(weekAnchorISO + "T00:00:00");
+    const dow = anchor.getDay();
+    const sunday = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() - dow);
     const days = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(sunday.getFullYear(), sunday.getMonth(), sunday.getDate() + i);
@@ -315,11 +318,43 @@ export default function FinancesApp() {
       const total = transactions
         .filter((t) => t.date === iso && (t.currency || "BRL") === primaryCurrency)
         .reduce((s, t) => s + Number(t.amount), 0);
-      days.push({ label: WEEKDAY_LABELS[i], date: iso, total });
+      days.push({ label: WEEKDAY_LABELS[i], dayNum: d.getDate(), date: iso, total });
     }
     const weekTotal = days.reduce((s, d) => s + d.total, 0);
     return { days, weekTotal };
-  }, [transactions, isCurrentMonth, year, month, primaryCurrency]);
+  }, [transactions, weekAnchorISO, primaryCurrency]);
+
+  const todayISO = today.toISOString().slice(0, 10);
+
+  function goToDate(iso) {
+    setSelectedDayISO(iso);
+    setWeekAnchorISO(iso);
+    const d = new Date(iso + "T00:00:00");
+    if (primaryPocket?.closingDay) {
+      const { year: cy, month: cm } = getCycleMonthForDate(d, primaryPocket.closingDay);
+      setYear(cy);
+      setMonth(cm);
+    } else {
+      setYear(d.getFullYear());
+      setMonth(d.getMonth());
+    }
+  }
+
+  function shiftWeek(delta) {
+    const selD = new Date(selectedDayISO + "T00:00:00");
+    selD.setDate(selD.getDate() + delta * 7);
+    goToDate(selD.toISOString().slice(0, 10));
+  }
+
+  const selectedDayLabel = (() => {
+    const sel = new Date(selectedDayISO + "T00:00:00");
+    const diffDays = Math.round((sel - new Date(todayISO + "T00:00:00")) / 86400000);
+    const dateStr = sel.toLocaleDateString("pt-BR");
+    if (diffDays === 0) return `hoje: ${dateStr}`;
+    if (diffDays === -1) return `ontem: ${dateStr}`;
+    if (diffDays === 1) return `amanhã: ${dateStr}`;
+    return `${WEEKDAY_NAMES[sel.getDay()]}: ${dateStr}`;
+  })();
 
   const daysLeftInMonth = useMemo(() => {
     const todayISO = today.toISOString().slice(0, 10);
@@ -366,6 +401,9 @@ export default function FinancesApp() {
   }
 
   function goToToday() {
+    const todayISOStr = today.toISOString().slice(0, 10);
+    setSelectedDayISO(todayISOStr);
+    setWeekAnchorISO(todayISOStr);
     if (primaryPocket?.closingDay) {
       const { year: cy, month: cm } = getCycleMonthForDate(today, primaryPocket.closingDay);
       setYear(cy);
@@ -492,12 +530,21 @@ export default function FinancesApp() {
           {view === "dashboard" && (
           <div className="relative mt-1">
             <div className="flex items-center justify-between">
-              <button onClick={goToToday} className="flex items-center gap-1.5" aria-label="Ir pra hoje">
-                <Calendar size={12} color={COLORS.brassSoft} />
-                <span className="font-mono text-xs" style={{ color: COLORS.brassSoft }}>
-                  hoje: {today.toLocaleDateString("pt-BR")}
-                </span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button onClick={goToToday} className="flex items-center gap-1.5" aria-label="Ir pra hoje">
+                  <Calendar size={12} color={COLORS.brassSoft} />
+                  <span className="font-mono text-xs" style={{ color: COLORS.brassSoft }}>
+                    {selectedDayLabel}
+                  </span>
+                </button>
+                {selectedDayISO !== todayISO && (
+                  <button onClick={goToToday}
+                    className="text-[10px] font-medium rounded-full px-2 py-0.5"
+                    style={{ background: COLORS.brass, color: COLORS.paper }}>
+                    atual
+                  </button>
+                )}
+              </div>
               <button
                 onClick={() => setShowMonthPicker((v) => !v)}
                 className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
@@ -628,17 +675,44 @@ export default function FinancesApp() {
             );
           })()}
 
-          <button onClick={() => setWeekChartClicked((v) => !v)} className="w-full flex justify-between items-center mt-3" aria-label="Ver total da semana">
-            {weekChart.days.map((d, i) => (
-              <div key={i} className="flex flex-col items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full transition-all"
-                  style={{ background: d.total > 0 ? (primaryPocket?.color || COLORS.brass) : "rgba(255,255,255,0.25)" }} />
-                <span className="font-mono text-[9px]" style={{ color: `${COLORS.paper}60` }}>{d.label}</span>
-              </div>
-            ))}
+          <div className="flex items-center gap-1 mt-3">
+            <button onClick={() => shiftWeek(-1)} aria-label="Semana anterior" className="p-1 flex-shrink-0">
+              <ChevronLeft size={14} color={`${COLORS.paper}80`} />
+            </button>
+            <div className="flex-1 flex justify-between items-center">
+              {weekChart.days.map((d, i) => {
+                const isSelected = d.date === selectedDayISO;
+                const isToday = d.date === todayISO;
+                return (
+                  <button key={i} onClick={() => goToDate(d.date)} className="flex flex-col items-center gap-1 py-1">
+                    <span className="font-mono text-[8px]" style={{ color: `${COLORS.paper}55` }}>{d.label}</span>
+                    <span
+                      className="w-5 h-5 rounded-full flex items-center justify-center font-mono text-[9px] transition-all"
+                      style={{
+                        background: isSelected ? (primaryPocket?.color || COLORS.brass) : (isToday ? "rgba(255,255,255,0.15)" : "transparent"),
+                        color: isSelected ? "#fff" : COLORS.paper,
+                        border: isToday && !isSelected ? `1px solid ${COLORS.brassSoft}` : "none",
+                      }}
+                    >
+                      {d.dayNum}
+                    </span>
+                    <span className="w-1 h-1 rounded-full"
+                      style={{ background: d.total > 0 ? (primaryPocket?.color || COLORS.brass) : "transparent" }} />
+                  </button>
+                );
+              })}
+            </div>
+            <button onClick={() => shiftWeek(1)} aria-label="Próxima semana" className="p-1 flex-shrink-0">
+              <ChevronRight size={14} color={`${COLORS.paper}80`} />
+            </button>
+          </div>
+          <button onClick={() => setWeekChartClicked((v) => !v)} className="w-full text-center mt-1">
+            <span className="font-mono text-[9px]" style={{ color: `${COLORS.paper}50` }}>
+              {weekChartClicked ? "ocultar total da semana" : "ver total da semana"}
+            </span>
           </button>
           {weekChartClicked && (
-            <p className="font-mono text-[10px] mt-1.5 text-center" style={{ color: COLORS.brassSoft }}>
+            <p className="font-mono text-[10px] mt-1 text-center" style={{ color: COLORS.brassSoft }}>
               total desta semana: {money(weekChart.weekTotal, primaryCurrency)}
             </p>
           )}
