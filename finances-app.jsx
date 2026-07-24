@@ -765,10 +765,10 @@ export default function FinancesApp() {
             const remaining = p.limit - spent;
             const r = 20, circumference = 2 * Math.PI * r;
             return (
-              <div key={p.id} className="flex-shrink-0 rounded-2xl p-3 flex items-center gap-2.5 relative"
+              <div key={p.id} className="flex-shrink-0 rounded-2xl p-3 pt-4 flex items-center gap-2.5 relative"
                 style={{ background: COLORS.paper, border: `1px solid ${p.id === primaryPocketId ? p.color || COLORS.brass : COLORS.line}`, width: 168 }}>
                 {p.id === primaryPocketId && (
-                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: p.color || COLORS.brass }}>
+                  <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: p.color || COLORS.brass }}>
                     <Star size={9} color="#fff" fill="#fff" />
                   </span>
                 )}
@@ -784,7 +784,12 @@ export default function FinancesApp() {
                     {over ? `estourou ${money(Math.abs(remaining), p.currency)}` : `faltam ${money(remaining, p.currency)}`}
                   </p>
                   {p.closingDay && (
-                    <p className="text-[9px]" style={{ color: COLORS.inkSoft }}>fecha dia {p.closingDay}</p>
+                    <>
+                      <p className="text-[9px]" style={{ color: COLORS.inkSoft }}>fecha dia {p.closingDay}</p>
+                      <p className="text-[9px]" style={{ color: COLORS.inkSoft }}>
+                        melhor dia: {p.closingDay === 31 ? 1 : p.closingDay + 1}
+                      </p>
+                    </>
                   )}
                 </div>
                 <div className="flex flex-col gap-1.5 flex-shrink-0">
