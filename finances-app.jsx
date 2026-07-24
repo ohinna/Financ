@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Plus, ChevronLeft, ChevronRight, CreditCard, X, Trash2, Wallet, User, LayoutGrid, Pencil, Check,
-  TrendingUp, TrendingDown, Calendar, Flame, Star,
+  TrendingUp, TrendingDown, Calendar, Flame, Star, Search,
 } from "lucide-react";
 
 // ---------- design tokens ----------
@@ -490,34 +490,21 @@ export default function FinancesApp() {
           </p>
 
           {view === "dashboard" && (
-            <button onClick={goToToday} className="flex items-center gap-1.5 mb-2" aria-label="Ir pra hoje">
-              <Calendar size={11} color={COLORS.brassSoft} />
-              <span className="font-mono text-[11px]" style={{ color: COLORS.brassSoft }}>
-                hoje: {today.toLocaleDateString("pt-BR")}
-              </span>
-            </button>
-          )}
-
-          {view === "dashboard" && (
-          <div className="relative mt-2">
-            <div
-              className="flex items-stretch rounded-xl overflow-hidden"
-              style={{ background: "rgba(255,255,255,0.06)", border: `1px solid ${COLORS.brassSoft}33` }}
-            >
-              <button onClick={() => shiftMonth(-1)} className="px-3 flex items-center hover:opacity-70" aria-label="Mês anterior"
-                style={{ borderRight: "1px solid rgba(255,255,255,0.1)" }}>
-                <ChevronLeft size={16} color={COLORS.paper} />
+          <div className="relative mt-1">
+            <div className="flex items-center justify-between">
+              <button onClick={goToToday} className="flex items-center gap-1.5" aria-label="Ir pra hoje">
+                <Calendar size={12} color={COLORS.brassSoft} />
+                <span className="font-mono text-xs" style={{ color: COLORS.brassSoft }}>
+                  hoje: {today.toLocaleDateString("pt-BR")}
+                </span>
               </button>
               <button
                 onClick={() => setShowMonthPicker((v) => !v)}
-                className="flex-1 flex items-center justify-center gap-1.5 py-2 hover:opacity-70"
+                className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
+                style={{ background: "rgba(255,255,255,0.08)" }}
+                aria-label="Buscar outro mês"
               >
-                <Calendar size={13} color={COLORS.brassSoft} />
-                <span className="font-mono text-sm" style={{ color: COLORS.paper }}>{MONTHS[month]} {year}</span>
-              </button>
-              <button onClick={() => shiftMonth(1)} className="px-3 flex items-center hover:opacity-70" aria-label="Próximo mês"
-                style={{ borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
-                <ChevronRight size={16} color={COLORS.paper} />
+                <Search size={13} color={COLORS.paper} />
               </button>
             </div>
 
