@@ -841,6 +841,8 @@ export default function FinancesApp() {
         <PocketModal
           COLORS={COLORS}
           initialPocket={editingPocket}
+          isPrimary={editingPocket ? editingPocket.id === primaryPocketId : false}
+          onTogglePrimary={setPrimaryPocket}
           onClose={() => { setShowAddPocket(false); setEditingPocket(null); }}
           onSave={(p) => {
             if (editingPocket) { updatePocket(editingPocket.id, p); setEditingPocket(null); }
@@ -1033,12 +1035,13 @@ function ModalShell({ title, onClose, children, COLORS }) {
   );
 }
 
-function PocketModal({ onClose, onSave, COLORS, initialPocket }) {
+function PocketModal({ onClose, onSave, COLORS, initialPocket, isPrimary, onTogglePrimary }) {
   const [name, setName] = useState(initialPocket?.name || "");
   const [last4, setLast4] = useState(initialPocket?.last4 && initialPocket.last4 !== "0000" ? initialPocket.last4 : "");
   const [limit, setLimit] = useState(initialPocket ? String(initialPocket.limit) : "");
   const [currency, setCurrency] = useState(initialPocket?.currency || "BRL");
   const [closingDay, setClosingDay] = useState(initialPocket?.closingDay ? String(initialPocket.closingDay) : "");
+  const [primary, setPrimary] = useState(!!isPrimary);
   const [error, setError] = useState("");
   const inputStyle = getInputStyle(COLORS);
   const isEditing = !!initialPocket;
@@ -1049,10 +1052,9 @@ function PocketModal({ onClose, onSave, COLORS, initialPocket }) {
     if (!limit || Number(limit) <= 0) { setError("Preenche o limite mensal (precisa ser maior que zero)."); return; }
     const cd = closingDay ? Math.min(31, Math.max(1, Number(closingDay))) : null;
     setError("");
-    onSave({
-      id: initialPocket?.id || String(Date.now()), name: name.trim(), last4: last4 || "0000",
-      limit: Number(limit), currency, closingDay: cd,
-    });
+    const id = initialPocket?.id || String(Date.now());
+    onSave({ id, name: name.trim(), last4: last4 || "0000", limit: Number(limit), currency, closingDay: cd });
+    if (primary !== !!isPrimary) onTogglePrimary(primary ? id : null);
   }
 
   return (
@@ -1084,6 +1086,15 @@ function PocketModal({ onClose, onSave, COLORS, initialPocket }) {
             Fecha todo dia {closingDay}. Melhor dia pra comprar: dia {Number(closingDay) === 31 ? 1 : Number(closingDay) + 1} (ganha o mês inteiro até a próxima fatura fechar).
           </p>
         )}
+
+        <label className="flex items-center gap-2 rounded-xl p-3 cursor-pointer select-none"
+          style={{ background: `${COLORS.brass}11`, border: `1px solid ${COLORS.line}` }}>
+          <input type="checkbox" checked={primary} onChange={(e) => setPrimary(e.target.checked)} />
+          <span className="text-xs" style={{ color: COLORS.ink }}>
+            Usar como <strong>cartão principal</strong> (define o ciclo do mês do app inteiro, se tiver fechamento)
+          </span>
+        </label>
+
         {error && (
           <p className="text-xs" style={{ color: COLORS.rust }}>{error}</p>
         )}
