@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Plus, ChevronLeft, ChevronRight, CreditCard, X, Trash2, Wallet, User, LayoutGrid, Pencil, Check,
-  TrendingUp, TrendingDown, Calendar, Flame,
+  TrendingUp, TrendingDown, Calendar, Flame, Star,
 } from "lucide-react";
 
 // ---------- design tokens ----------
@@ -50,6 +50,11 @@ function nextCategoryColor(existing) {
 }
 function categoryColor(categories, name) {
   return categories.find((c) => c.name === name)?.color || "#8C8468";
+}
+
+const POCKET_PALETTE = ["#B08D3E", "#5B8AC7", "#7A5C8A", "#5C7A5A", "#C77A6B", "#4FA8A0", "#D9895F", "#8E7CC3"];
+function nextPocketColor(existing) {
+  return POCKET_PALETTE[existing.length % POCKET_PALETTE.length];
 }
 
 const MONEY_QUOTES = [
@@ -101,7 +106,7 @@ function getCycleBounds(year, month, closingDay) {
   return { start: toISO(start), end: toISO(end) };
 }
 
-const DEFAULT_PROFILE = { name: "Minha conta", theme: "navy", createdAt: new Date().toISOString().slice(0, 10) };
+const DEFAULT_PROFILE = { name: "Minha conta", theme: "navy", primaryPocketId: null, createdAt: new Date().toISOString().slice(0, 10) };
 
 // ---------- storage helpers ----------
 async function loadData() {
@@ -147,6 +152,7 @@ export default function FinancesApp() {
   const [pockets, setPockets] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
+  const primaryPocketId = profile.primaryPocketId;
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [view, setView] = useState("dashboard"); // "dashboard" | "profile"
   const today = new Date();
@@ -155,9 +161,11 @@ export default function FinancesApp() {
   const isCurrentMonth = month === today.getMonth() && year === today.getFullYear();
   const [showAddTx, setShowAddTx] = useState(false);
   const [showAddPocket, setShowAddPocket] = useState(false);
+  const [editingPocket, setEditingPocket] = useState(null);
   const [activePocketId, setActivePocketId] = useState(null);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState([]);
+  const [selectedPockets, setSelectedPockets] = useState([]);
   const [weekChartClicked, setWeekChartClicked] = useState(false);
   const [quoteIndex, setQuoteIndex] = useState(0);
 
@@ -186,11 +194,17 @@ export default function FinancesApp() {
   }, []);
 
   const currentKey = monthKey(year, month);
+  const primaryPocket = pockets.find((p) => p.id === primaryPocketId) || null;
+  const activeCycle = primaryPocket?.closingDay
+    ? getCycleBounds(year, month, primaryPocket.closingDay)
+    : null;
 
-  const monthTx = useMemo(
-    () => transactions.filter((t) => t.date.slice(0, 7) === currentKey),
-    [transactions, currentKey]
-  );
+  const monthTx = useMemo(() => {
+    if (activeCycle) {
+      return transactions.filter((t) => t.date >= activeCycle.start && t.date <= activeCycle.end);
+    }
+    return transactions.filter((t) => t.date.slice(0, 7) === currentKey);
+  }, [transactions, currentKey, activeCycle]);
 
   const totalsByCurrency = useMemo(() => {
     const map = {};
@@ -207,9 +221,14 @@ export default function FinancesApp() {
     return Array.from(set);
   }, [pockets, totalsByCurrency]);
 
+  const pocketFilteredMonthTx = useMemo(() => {
+    if (selectedPockets.length === 0) return monthTx;
+    return monthTx.filter((t) => selectedPockets.includes(t.pocketId));
+  }, [monthTx, selectedPockets]);
+
   const byCategoryByCurrency = useMemo(() => {
     const map = {};
-    monthTx.forEach((t) => {
+    pocketFilteredMonthTx.forEach((t) => {
       const c = t.currency || "BRL";
       if (!map[c]) map[c] = {};
       map[c][t.category] = (map[c][t.category] || 0) + Number(t.amount);
@@ -219,7 +238,7 @@ export default function FinancesApp() {
       result[c] = Object.entries(cats).map(([name, value]) => ({ name, value }));
     });
     return result;
-  }, [monthTx]);
+  }, [pocketFilteredMonthTx]);
 
   function spentForPocket(pocketId) {
     const pocket = pockets.find((p) => p.id === pocketId);
@@ -236,9 +255,15 @@ export default function FinancesApp() {
   const primaryCurrency = Object.keys(totalsByCurrency)[0] || (pockets[0]?.currency) || "BRL";
 
   const filteredMonthTx = useMemo(() => {
-    if (selectedCategories.length === 0) return monthTx;
-    return monthTx.filter((t) => selectedCategories.includes(t.category));
-  }, [monthTx, selectedCategories]);
+    if (selectedCategories.length === 0) return pocketFilteredMonthTx;
+    return pocketFilteredMonthTx.filter((t) => selectedCategories.includes(t.category));
+  }, [pocketFilteredMonthTx, selectedCategories]);
+
+  function togglePocketFilter(id) {
+    setSelectedPockets((prev) =>
+      prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]
+    );
+  }
 
   const WEEKDAY_LABELS = ["D", "S", "T", "Q", "Q", "S", "S"];
   const weekChart = useMemo(() => {
@@ -259,10 +284,17 @@ export default function FinancesApp() {
   }, [transactions, isCurrentMonth, year, month, primaryCurrency]);
 
   const daysLeftInMonth = useMemo(() => {
+    const todayISO = today.toISOString().slice(0, 10);
+    if (activeCycle) {
+      if (todayISO < activeCycle.start || todayISO > activeCycle.end) return null;
+      const [ey, em, ed] = activeCycle.end.split("-").map(Number);
+      const endDate = new Date(ey, em - 1, ed);
+      return Math.round((endDate - new Date(todayISO)) / 86400000);
+    }
     if (!isCurrentMonth) return null;
     const lastDay = new Date(year, month + 1, 0).getDate();
     return lastDay - today.getDate();
-  }, [isCurrentMonth, year, month]);
+  }, [isCurrentMonth, year, month, activeCycle]);
 
   const biggestExpense = useMemo(() => {
     if (monthTx.length === 0) return null;
@@ -307,6 +339,10 @@ export default function FinancesApp() {
     saveProfile(next);
   }
 
+  function setPrimaryPocket(id) {
+    updateProfile({ primaryPocketId: id });
+  }
+
   function addCategory(name) {
     const trimmed = name.trim();
     if (!trimmed || categories.some((c) => c.name.toLowerCase() === trimmed.toLowerCase())) return;
@@ -331,10 +367,18 @@ export default function FinancesApp() {
   }
 
   function addPocket(pocket) {
-    const next = [...pockets, pocket];
+    const withColor = { ...pocket, color: pocket.color || nextPocketColor(pockets) };
+    const next = [...pockets, withColor];
     setPockets(next);
     savePockets(next);
-    if (!activePocketId) setActivePocketId(pocket.id);
+    if (!activePocketId) setActivePocketId(withColor.id);
+    if (!primaryPocketId) setPrimaryPocket(withColor.id);
+  }
+
+  function updatePocket(id, patch) {
+    const next = pockets.map((p) => (p.id === id ? { ...p, ...patch } : p));
+    setPockets(next);
+    savePockets(next);
   }
 
   function deletePocket(id) {
@@ -505,9 +549,16 @@ export default function FinancesApp() {
             <div className="flex items-center gap-1.5 mt-3 rounded-lg px-2.5 py-1.5" style={{ background: "rgba(255,255,255,0.08)" }}>
               <Calendar size={12} color={COLORS.brassSoft} />
               <p className="font-mono text-[10px]" style={{ color: `${COLORS.paper}B0` }}>
-                faltam {daysLeftInMonth} {daysLeftInMonth === 1 ? "dia" : "dias"} pro fim do mês
+                {activeCycle
+                  ? `faltam ${daysLeftInMonth} ${daysLeftInMonth === 1 ? "dia" : "dias"} pra fatura do ${primaryPocket.name} fechar`
+                  : `faltam ${daysLeftInMonth} ${daysLeftInMonth === 1 ? "dia" : "dias"} pro fim do mês`}
               </p>
             </div>
+          )}
+          {activeCycle && (
+            <p className="text-[10px] mt-1.5" style={{ color: `${COLORS.paper}70` }}>
+              vendo o ciclo de {activeCycle.start.split("-").reverse().join("/")} a {activeCycle.end.split("-").reverse().join("/")}, seguindo o fechamento do {primaryPocket.name}
+            </p>
           )}
 
           <button onClick={() => setWeekChartClicked((v) => !v)} className="w-full flex justify-between items-center mt-3" aria-label="Ver total da semana">
@@ -525,6 +576,37 @@ export default function FinancesApp() {
             </p>
           )}
         </div>
+
+        {/* pocket filter chips */}
+        {pockets.length > 0 && (
+          <>
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>cartões</p>
+              {selectedPockets.length > 0 && (
+                <button onClick={() => setSelectedPockets([])} className="text-[11px] font-medium" style={{ color: COLORS.brass }}>
+                  limpar filtro
+                </button>
+              )}
+            </div>
+            <div className="flex gap-1.5 mb-3 overflow-x-auto">
+              {pockets.map((p) => {
+                const active = selectedPockets.includes(p.id);
+                const c = p.color || COLORS.brass;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => togglePocketFilter(p.id)}
+                    className="flex-shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
+                    style={{ background: active ? c : COLORS.paper, color: active ? "#fff" : COLORS.ink, border: `1px solid ${active ? c : COLORS.line}` }}
+                  >
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: active ? "#fff" : c }} />
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
 
         {/* category filter tags */}
         <div className="flex items-center justify-between mb-1.5">
@@ -605,10 +687,16 @@ export default function FinancesApp() {
             const remaining = p.limit - spent;
             const r = 20, circumference = 2 * Math.PI * r;
             return (
-              <div key={p.id} className="flex-shrink-0 rounded-2xl p-3 flex items-center gap-2.5" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}`, width: 168 }}>
+              <div key={p.id} className="flex-shrink-0 rounded-2xl p-3 flex items-center gap-2.5 relative"
+                style={{ background: COLORS.paper, border: `1px solid ${p.id === primaryPocketId ? p.color || COLORS.brass : COLORS.line}`, width: 168 }}>
+                {p.id === primaryPocketId && (
+                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: p.color || COLORS.brass }}>
+                    <Star size={9} color="#fff" fill="#fff" />
+                  </span>
+                )}
                 <svg width="46" height="46" viewBox="0 0 46 46" className="flex-shrink-0">
                   <circle cx="23" cy="23" r={r} fill="none" stroke={COLORS.line} strokeWidth="5" />
-                  <circle cx="23" cy="23" r={r} fill="none" stroke={over ? COLORS.rust : COLORS.brass} strokeWidth="5"
+                  <circle cx="23" cy="23" r={r} fill="none" stroke={over ? COLORS.rust : (p.color || COLORS.brass)} strokeWidth="5"
                     strokeDasharray={circumference} strokeDashoffset={circumference - (pct / 100) * circumference}
                     strokeLinecap="round" transform="rotate(-90 23 23)" />
                 </svg>
@@ -621,9 +709,18 @@ export default function FinancesApp() {
                     <p className="text-[9px]" style={{ color: COLORS.inkSoft }}>fecha dia {p.closingDay}</p>
                   )}
                 </div>
-                <button onClick={() => deletePocket(p.id)} aria-label="Remover bolso" className="flex-shrink-0">
-                  <Trash2 size={12} style={{ color: COLORS.inkSoft }} />
-                </button>
+                <div className="flex flex-col gap-1.5 flex-shrink-0">
+                  <button onClick={() => setPrimaryPocket(p.id === primaryPocketId ? null : p.id)} aria-label="Marcar como principal">
+                    <Star size={12} style={{ color: p.id === primaryPocketId ? (p.color || COLORS.brass) : COLORS.inkSoft }}
+                      fill={p.id === primaryPocketId ? (p.color || COLORS.brass) : "none"} />
+                  </button>
+                  <button onClick={() => setEditingPocket(p)} aria-label="Editar bolso">
+                    <Pencil size={12} style={{ color: COLORS.inkSoft }} />
+                  </button>
+                  <button onClick={() => deletePocket(p.id)} aria-label="Remover bolso">
+                    <Trash2 size={12} style={{ color: COLORS.inkSoft }} />
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -740,11 +837,15 @@ export default function FinancesApp() {
         </div>
       </div>
 
-      {showAddPocket && (
+      {(showAddPocket || editingPocket) && (
         <PocketModal
           COLORS={COLORS}
-          onClose={() => setShowAddPocket(false)}
-          onSave={(p) => { addPocket(p); setShowAddPocket(false); }}
+          initialPocket={editingPocket}
+          onClose={() => { setShowAddPocket(false); setEditingPocket(null); }}
+          onSave={(p) => {
+            if (editingPocket) { updatePocket(editingPocket.id, p); setEditingPocket(null); }
+            else { addPocket(p); setShowAddPocket(false); }
+          }}
         />
       )}
       {showAddTx && (
@@ -752,6 +853,7 @@ export default function FinancesApp() {
           COLORS={COLORS}
           pockets={pockets}
           categories={categories}
+          defaultPocketId={primaryPocketId}
           defaultDate={new Date(year, month, Math.min(today.getDate(), 28)).toISOString().slice(0, 10)}
           onClose={() => setShowAddTx(false)}
           onSave={(t) => { addTransaction(t); setShowAddTx(false); }}
@@ -931,14 +1033,15 @@ function ModalShell({ title, onClose, children, COLORS }) {
   );
 }
 
-function PocketModal({ onClose, onSave, COLORS }) {
-  const [name, setName] = useState("");
-  const [last4, setLast4] = useState("");
-  const [limit, setLimit] = useState("");
-  const [currency, setCurrency] = useState("BRL");
-  const [closingDay, setClosingDay] = useState("");
+function PocketModal({ onClose, onSave, COLORS, initialPocket }) {
+  const [name, setName] = useState(initialPocket?.name || "");
+  const [last4, setLast4] = useState(initialPocket?.last4 && initialPocket.last4 !== "0000" ? initialPocket.last4 : "");
+  const [limit, setLimit] = useState(initialPocket ? String(initialPocket.limit) : "");
+  const [currency, setCurrency] = useState(initialPocket?.currency || "BRL");
+  const [closingDay, setClosingDay] = useState(initialPocket?.closingDay ? String(initialPocket.closingDay) : "");
   const [error, setError] = useState("");
   const inputStyle = getInputStyle(COLORS);
+  const isEditing = !!initialPocket;
 
   function submit(e) {
     e.preventDefault();
@@ -947,13 +1050,13 @@ function PocketModal({ onClose, onSave, COLORS }) {
     const cd = closingDay ? Math.min(31, Math.max(1, Number(closingDay))) : null;
     setError("");
     onSave({
-      id: String(Date.now()), name: name.trim(), last4: last4 || "0000",
+      id: initialPocket?.id || String(Date.now()), name: name.trim(), last4: last4 || "0000",
       limit: Number(limit), currency, closingDay: cd,
     });
   }
 
   return (
-    <ModalShell title="Novo bolso" onClose={onClose} COLORS={COLORS}>
+    <ModalShell title={isEditing ? "Editar bolso" : "Novo bolso"} onClose={onClose} COLORS={COLORS}>
       <form onSubmit={submit} className="space-y-3">
         <Field label="Nome do bolso ou cartão" COLORS={COLORS}>
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cartão Nubank"
@@ -986,7 +1089,7 @@ function PocketModal({ onClose, onSave, COLORS }) {
         )}
         <button type="submit" className="w-full mt-2 rounded-full py-2.5 text-sm font-medium"
           style={{ background: COLORS.brass, color: COLORS.paper }}>
-          Salvar bolso
+          {isEditing ? "Salvar alterações" : "Salvar bolso"}
         </button>
       </form>
     </ModalShell>
@@ -1001,10 +1104,10 @@ function addMonthsToDate(dateStr, n) {
   return target.toISOString().slice(0, 10);
 }
 
-function TransactionModal({ pockets, categories, defaultDate, onClose, onSave, COLORS }) {
+function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, onClose, onSave, COLORS }) {
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState(categories[0]?.name || "");
-  const [pocketId, setPocketId] = useState(pockets[0]?.id || "");
+  const [pocketId, setPocketId] = useState(defaultPocketId || pockets[0]?.id || "");
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(defaultDate);
   const [isInstallment, setIsInstallment] = useState(false);
