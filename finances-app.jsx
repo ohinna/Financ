@@ -106,6 +106,19 @@ function getCycleBounds(year, month, closingDay) {
   return { start: toISO(start), end: toISO(end) };
 }
 
+// Given a real date and a card's closing day, returns the {year, month}
+// (calendar-month index) whose billing cycle currently contains that date.
+// If today is past the closing day, the current cycle is "next month".
+function getCycleMonthForDate(date, closingDay) {
+  let year = date.getFullYear();
+  let month = date.getMonth();
+  if (date.getDate() > closingDay) {
+    month += 1;
+    if (month > 11) { month = 0; year += 1; }
+  }
+  return { year, month };
+}
+
 const DEFAULT_PROFILE = { name: "Minha conta", theme: "navy", primaryPocketId: null, createdAt: new Date().toISOString().slice(0, 10) };
 
 // ---------- storage helpers ----------
@@ -158,7 +171,6 @@ export default function FinancesApp() {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
-  const isCurrentMonth = month === today.getMonth() && year === today.getFullYear();
   const [showAddTx, setShowAddTx] = useState(false);
   const [showAddPocket, setShowAddPocket] = useState(false);
   const [editingPocket, setEditingPocket] = useState(null);
@@ -198,6 +210,22 @@ export default function FinancesApp() {
   const activeCycle = primaryPocket?.closingDay
     ? getCycleBounds(year, month, primaryPocket.closingDay)
     : null;
+
+  const isCurrentMonth = activeCycle
+    ? (today.toISOString().slice(0, 10) >= activeCycle.start && today.toISOString().slice(0, 10) <= activeCycle.end)
+    : (month === today.getMonth() && year === today.getFullYear());
+
+  useEffect(() => {
+    if (loading || !primaryPocket?.closingDay) return;
+    const todayISO = today.toISOString().slice(0, 10);
+    const cycle = getCycleBounds(year, month, primaryPocket.closingDay);
+    if (todayISO < cycle.start || todayISO > cycle.end) {
+      const { year: cy, month: cm } = getCycleMonthForDate(today, primaryPocket.closingDay);
+      setYear(cy);
+      setMonth(cm);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [primaryPocketId, primaryPocket?.closingDay, loading]);
 
   const monthTx = useMemo(() => {
     if (activeCycle) {
@@ -328,8 +356,14 @@ export default function FinancesApp() {
   }
 
   function goToToday() {
-    setMonth(today.getMonth());
-    setYear(today.getFullYear());
+    if (primaryPocket?.closingDay) {
+      const { year: cy, month: cm } = getCycleMonthForDate(today, primaryPocket.closingDay);
+      setYear(cy);
+      setMonth(cm);
+    } else {
+      setMonth(today.getMonth());
+      setYear(today.getFullYear());
+    }
     setShowMonthPicker(false);
   }
 
@@ -856,7 +890,7 @@ export default function FinancesApp() {
           pockets={pockets}
           categories={categories}
           defaultPocketId={primaryPocketId}
-          defaultDate={new Date(year, month, Math.min(today.getDate(), 28)).toISOString().slice(0, 10)}
+          defaultDate={today.toISOString().slice(0, 10)}
           onClose={() => setShowAddTx(false)}
           onSave={(t) => { addTransaction(t); setShowAddTx(false); }}
         />
