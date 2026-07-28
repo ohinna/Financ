@@ -43,7 +43,11 @@ const CATEGORY_COLORS = {
   "Compras": "#7A5C8A",
   "Outros": "#8C8468",
 };
-const DEFAULT_CATEGORIES = Object.entries(CATEGORY_COLORS).map(([name, color]) => ({ name, color }));
+const CATEGORY_ESSENTIAL = {
+  "Alimentação": true, "Transporte": true, "Lazer": false, "Casa": true,
+  "Saúde": true, "Compras": false, "Outros": false,
+};
+const DEFAULT_CATEGORIES = Object.entries(CATEGORY_COLORS).map(([name, color]) => ({ name, color, essential: CATEGORY_ESSENTIAL[name] ?? true }));
 const CATEGORY_PALETTE = ["#B08D3E", "#5C7A5A", "#8A5A44", "#3F6350", "#A4472B", "#7A5C8A", "#8C8468", "#4F7A8A", "#A67C52", "#6B7A3F"];
 function nextCategoryColor(existing) {
   return CATEGORY_PALETTE[existing.length % CATEGORY_PALETTE.length];
@@ -88,6 +92,8 @@ const CURRENCIES = {
 };
 const CURRENCY_CODES = Object.keys(CURRENCIES);
 
+const PAYMENT_METHODS = ["Cartão de crédito", "Pix", "Dinheiro", "Débito", "Boleto"];
+
 function money(n, code = "BRL") {
   const c = CURRENCIES[code] || CURRENCIES.BRL;
   return (n || 0).toLocaleString(c.locale, { style: "currency", currency: code });
@@ -123,7 +129,7 @@ const DEFAULT_PROFILE = { name: "Minha conta", theme: "navy", primaryPocketId: n
 
 // ---------- storage helpers ----------
 async function loadData() {
-  const result = { pockets: [], transactions: [], profile: DEFAULT_PROFILE, categories: DEFAULT_CATEGORIES };
+  const result = { pockets: [], transactions: [], profile: DEFAULT_PROFILE, categories: DEFAULT_CATEGORIES, bills: [] };
   try {
     const p = await window.storage.get("finances:pockets");
     if (p && p.value) result.pockets = JSON.parse(p.value);
@@ -139,6 +145,10 @@ async function loadData() {
   try {
     const c = await window.storage.get("finances:categories");
     if (c && c.value) result.categories = JSON.parse(c.value);
+  } catch (e) { /* no data yet */ }
+  try {
+    const b = await window.storage.get("finances:bills");
+    if (b && b.value) result.bills = JSON.parse(b.value);
   } catch (e) { /* no data yet */ }
   return result;
 }
@@ -158,6 +168,10 @@ async function saveCategories(categories) {
   try { await window.storage.set("finances:categories", JSON.stringify(categories)); }
   catch (e) { console.error("Erro ao salvar categorias", e); }
 }
+async function saveBills(bills) {
+  try { await window.storage.set("finances:bills", JSON.stringify(bills)); }
+  catch (e) { console.error("Erro ao salvar contas", e); }
+}
 
 // ---------- main app ----------
 export default function FinancesApp() {
@@ -167,6 +181,9 @@ export default function FinancesApp() {
   const [profile, setProfile] = useState(DEFAULT_PROFILE);
   const primaryPocketId = profile.primaryPocketId;
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const [bills, setBills] = useState([]);
+  const [showAddBill, setShowAddBill] = useState(false);
+  const [editingBill, setEditingBill] = useState(null);
   const [view, setView] = useState("dashboard"); // "dashboard" | "profile"
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
@@ -197,11 +214,12 @@ export default function FinancesApp() {
   };
 
   useEffect(() => {
-    loadData().then(({ pockets, transactions, profile, categories }) => {
+    loadData().then(({ pockets, transactions, profile, categories, bills }) => {
       setPockets(pockets);
       setTransactions(transactions);
       setProfile(profile);
       setCategories(categories);
+      setBills(bills);
       if (pockets.length && !activePocketId) setActivePocketId(pockets[0].id);
       setLoading(false);
     });
@@ -239,6 +257,17 @@ export default function FinancesApp() {
   const totalsByCurrency = useMemo(() => {
     const map = {};
     monthTx.forEach((t) => {
+      if (t.type === "income" || t.type === "investment") return;
+      const c = t.currency || "BRL";
+      map[c] = (map[c] || 0) + Number(t.amount);
+    });
+    return map;
+  }, [monthTx]);
+
+  const incomeByCurrency = useMemo(() => {
+    const map = {};
+    monthTx.forEach((t) => {
+      if (t.type !== "income") return;
       const c = t.currency || "BRL";
       map[c] = (map[c] || 0) + Number(t.amount);
     });
@@ -259,6 +288,7 @@ export default function FinancesApp() {
   const byCategoryByCurrency = useMemo(() => {
     const map = {};
     pocketFilteredMonthTx.forEach((t) => {
+      if (t.type === "income" || t.type === "investment") return;
       const c = t.currency || "BRL";
       if (!map[c]) map[c] = {};
       map[c][t.category] = (map[c][t.category] || 0) + Number(t.amount);
@@ -275,14 +305,28 @@ export default function FinancesApp() {
     if (pocket && pocket.closingDay) {
       const { start, end } = getCycleBounds(year, month, pocket.closingDay);
       return transactions
-        .filter((t) => t.pocketId === pocketId && t.date >= start && t.date <= end)
+        .filter((t) => t.pocketId === pocketId && t.type !== "income" && t.type !== "investment" && t.date >= start && t.date <= end)
         .reduce((s, t) => s + Number(t.amount), 0);
     }
-    return monthTx.filter((t) => t.pocketId === pocketId)
+    return monthTx.filter((t) => t.pocketId === pocketId && t.type !== "income" && t.type !== "investment")
       .reduce((s, t) => s + Number(t.amount), 0);
   }
 
   const primaryCurrency = Object.keys(totalsByCurrency)[0] || (pockets[0]?.currency) || "BRL";
+
+  const essentialBreakdown = useMemo(() => {
+    let essential = 0, superfluous = 0;
+    monthTx.forEach((t) => {
+      if (t.type === "income" || t.type === "investment") return;
+      if ((t.currency || "BRL") !== primaryCurrency) return;
+      const cat = categories.find((c) => c.name === t.category);
+      const isEssential = cat ? cat.essential !== false : true;
+      if (isEssential) essential += Number(t.amount);
+      else superfluous += Number(t.amount);
+    });
+    const total = essential + superfluous;
+    return { essential, superfluous, total, essentialPct: total > 0 ? (essential / total) * 100 : 0 };
+  }, [monthTx, categories, primaryCurrency]);
 
   const totalLimit = primaryPocket
     ? Number(primaryPocket.limit || 0)
@@ -293,6 +337,17 @@ export default function FinancesApp() {
   const overallPct = totalLimit > 0 ? Math.min(100, (totalSpentPrimary / totalLimit) * 100) : null;
   const overallRemaining = totalLimit - totalSpentPrimary;
   const overallCurrency = primaryPocket ? (primaryPocket.currency || "BRL") : primaryCurrency;
+
+  const totalIncomePrimary = incomeByCurrency[primaryCurrency] || 0;
+  const profitPrimary = totalIncomePrimary - (totalsByCurrency[primaryCurrency] || 0);
+  const hasIncomeThisPeriod = Object.keys(incomeByCurrency).length > 0;
+
+  const investedThisPeriod = monthTx
+    .filter((t) => t.type === "investment" && (t.currency || "BRL") === primaryCurrency)
+    .reduce((s, t) => s + Number(t.amount), 0);
+  const investedAllTime = transactions
+    .filter((t) => t.type === "investment" && (t.currency || "BRL") === primaryCurrency)
+    .reduce((s, t) => s + Number(t.amount), 0);
 
   const filteredMonthTx = useMemo(() => {
     if (selectedCategories.length === 0) return pocketFilteredMonthTx;
@@ -316,7 +371,7 @@ export default function FinancesApp() {
       const d = new Date(sunday.getFullYear(), sunday.getMonth(), sunday.getDate() + i);
       const iso = d.toISOString().slice(0, 10);
       const total = transactions
-        .filter((t) => t.date === iso && (t.currency || "BRL") === primaryCurrency)
+        .filter((t) => t.date === iso && t.type !== "income" && t.type !== "investment" && (t.currency || "BRL") === primaryCurrency)
         .reduce((s, t) => s + Number(t.amount), 0);
       days.push({ label: WEEKDAY_LABELS[i], dayNum: d.getDate(), date: iso, total });
     }
@@ -370,8 +425,9 @@ export default function FinancesApp() {
   }, [isCurrentMonth, year, month, activeCycle]);
 
   const biggestExpense = useMemo(() => {
-    if (monthTx.length === 0) return null;
-    return monthTx.reduce((max, t) => (Number(t.amount) > Number(max.amount) ? t : max), monthTx[0]);
+    const expenses = monthTx.filter((t) => t.type !== "income" && t.type !== "investment");
+    if (expenses.length === 0) return null;
+    return expenses.reduce((max, t) => (Number(t.amount) > Number(max.amount) ? t : max), expenses[0]);
   }, [monthTx]);
 
   const monthTrend = useMemo(() => {
@@ -379,7 +435,7 @@ export default function FinancesApp() {
     if (pm < 0) { pm = 11; py -= 1; }
     const pKey = monthKey(py, pm);
     const prevTotal = transactions
-      .filter((t) => t.date.slice(0, 7) === pKey && (t.currency || "BRL") === primaryCurrency)
+      .filter((t) => t.date.slice(0, 7) === pKey && t.type !== "income" && t.type !== "investment" && (t.currency || "BRL") === primaryCurrency)
       .reduce((s, t) => s + Number(t.amount), 0);
     const curTotal = totalsByCurrency[primaryCurrency] || 0;
     if (prevTotal === 0) return null;
@@ -428,7 +484,7 @@ export default function FinancesApp() {
   function addCategory(name) {
     const trimmed = name.trim();
     if (!trimmed || categories.some((c) => c.name.toLowerCase() === trimmed.toLowerCase())) return;
-    const next = [...categories, { name: trimmed, color: nextCategoryColor(categories) }];
+    const next = [...categories, { name: trimmed, color: nextCategoryColor(categories), essential: true }];
     setCategories(next);
     saveCategories(next);
   }
@@ -438,6 +494,41 @@ export default function FinancesApp() {
     setCategories(next);
     saveCategories(next);
     setSelectedCategories((prev) => prev.filter((c) => c !== name));
+  }
+
+  function toggleCategoryEssential(name) {
+    const next = categories.map((c) => (c.name === name ? { ...c, essential: !c.essential } : c));
+    setCategories(next);
+    saveCategories(next);
+  }
+
+  function addBill(bill) {
+    const next = [...bills, bill];
+    setBills(next);
+    saveBills(next);
+  }
+
+  function updateBill(id, patch) {
+    const next = bills.map((b) => (b.id === id ? { ...b, ...patch } : b));
+    setBills(next);
+    saveBills(next);
+  }
+
+  function deleteBill(id) {
+    const next = bills.filter((b) => b.id !== id);
+    setBills(next);
+    saveBills(next);
+  }
+
+  function toggleBillPaid(id, monthKeyStr) {
+    const next = bills.map((b) => {
+      if (b.id !== id) return b;
+      const paidMonths = b.paidMonths || [];
+      const isPaid = paidMonths.includes(monthKeyStr);
+      return { ...b, paidMonths: isPaid ? paidMonths.filter((m) => m !== monthKeyStr) : [...paidMonths, monthKeyStr] };
+    });
+    setBills(next);
+    saveBills(next);
   }
 
   function clearAllData() {
@@ -631,6 +722,17 @@ export default function FinancesApp() {
               </p>
             </div>
           </div>
+
+          {hasIncomeThisPeriod && (
+            <div className="flex items-center justify-between mt-2.5 rounded-lg px-2.5 py-2" style={{ background: "rgba(92,122,90,0.18)" }}>
+              <p className="text-[10px]" style={{ color: "#A8D2A4" }}>
+                receitas: <span className="font-mono">{money(totalIncomePrimary, primaryCurrency)}</span>
+              </p>
+              <p className="text-[10px] font-mono" style={{ color: profitPrimary >= 0 ? "#A8D2A4" : COLORS.rust }}>
+                lucro: {money(profitPrimary, primaryCurrency)}
+              </p>
+            </div>
+          )}
 
           {overallPct !== null && (
             <div className="mt-3">
@@ -883,6 +985,58 @@ export default function FinancesApp() {
           </button>
         </div>
 
+        {/* contas a pagar */}
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>contas a pagar</p>
+          <button onClick={() => setShowAddBill(true)} className="text-[11px] font-medium" style={{ color: COLORS.brass }}>
+            + nova conta
+          </button>
+        </div>
+        {bills.length === 0 ? (
+          <div className="rounded-xl border border-dashed p-4 text-center mb-4" style={{ borderColor: COLORS.line }}>
+            <p className="text-xs" style={{ color: COLORS.inkSoft }}>Nenhuma conta cadastrada. Adicione luz, aluguel, boletos etc.</p>
+          </div>
+        ) : (
+          <div className="rounded-2xl p-2 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+            {bills
+              .slice()
+              .sort((a, b) => a.dueDay - b.dueDay)
+              .map((b) => {
+                const paid = (b.paidMonths || []).includes(currentKey);
+                const daysUntil = isCurrentMonth ? b.dueDay - today.getDate() : null;
+                const overdue = !paid && isCurrentMonth && daysUntil < 0;
+                return (
+                  <div key={b.id} className="flex items-center gap-2.5 px-2 py-2 rounded-xl" style={{ background: overdue ? `${COLORS.rust}14` : "transparent" }}>
+                    <button
+                      onClick={() => toggleBillPaid(b.id, currentKey)}
+                      className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
+                      style={{ background: paid ? "#5C7A5A" : "transparent", border: `1.5px solid ${paid ? "#5C7A5A" : COLORS.line}` }}
+                      aria-label={paid ? "Marcar como não paga" : "Marcar como paga"}
+                    >
+                      {paid && <Check size={12} color="#fff" />}
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate" style={{ textDecoration: paid ? "line-through" : "none", color: paid ? COLORS.inkSoft : COLORS.ink }}>
+                        {b.name}
+                      </p>
+                      <p className="text-[10px]" style={{ color: overdue ? COLORS.rust : COLORS.inkSoft }}>
+                        {overdue ? `venceu dia ${b.dueDay}` : `vence dia ${b.dueDay}`}
+                        {isCurrentMonth && !paid && daysUntil >= 0 ? ` · faltam ${daysUntil} ${daysUntil === 1 ? "dia" : "dias"}` : ""}
+                      </p>
+                    </div>
+                    <span className="font-mono text-xs flex-shrink-0" style={{ color: COLORS.ink }}>{money(b.amount, b.currency)}</span>
+                    <button onClick={() => setEditingBill(b)} aria-label="Editar conta" className="flex-shrink-0">
+                      <Pencil size={12} style={{ color: COLORS.inkSoft }} />
+                    </button>
+                    <button onClick={() => deleteBill(b.id)} aria-label="Remover conta" className="flex-shrink-0">
+                      <Trash2 size={12} style={{ color: COLORS.inkSoft }} />
+                    </button>
+                  </div>
+                );
+              })}
+          </div>
+        )}
+
         {/* biggest expense highlight */}
         {biggestExpense && (
           <div className="flex items-center gap-2 mb-4 rounded-lg px-3 py-2.5" style={{ background: `${COLORS.rust}14`, border: `1px solid ${COLORS.rust}33` }}>
@@ -893,14 +1047,52 @@ export default function FinancesApp() {
           </div>
         )}
 
-        {/* add expense button */}
+        {/* investments */}
+        {investedAllTime > 0 && (
+          <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>investimentos</p>
+              <span className="w-2 h-2 rounded-full" style={{ background: "#5B8AC7" }} />
+            </div>
+            <div className="flex items-end justify-between">
+              <div>
+                <p className="text-[10px]" style={{ color: COLORS.inkSoft }}>investido este mês</p>
+                <p className="font-mono text-base" style={{ color: "#5B8AC7" }}>{money(investedThisPeriod, primaryCurrency)}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-[10px]" style={{ color: COLORS.inkSoft }}>total guardado</p>
+                <p className="font-mono text-sm" style={{ color: COLORS.ink }}>{money(investedAllTime, primaryCurrency)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* essential vs superfluous */}
+        {essentialBreakdown.total > 0 && (
+          <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+            <p className="text-xs uppercase tracking-wider mb-2" style={{ color: COLORS.inkSoft }}>essencial vs supérfluo</p>
+            <div className="w-full h-2.5 rounded-full overflow-hidden flex" style={{ background: COLORS.line }}>
+              <div style={{ width: `${essentialBreakdown.essentialPct}%`, background: "#5C7A5A" }} />
+              <div style={{ width: `${100 - essentialBreakdown.essentialPct}%`, background: COLORS.rust }} />
+            </div>
+            <div className="flex justify-between mt-1.5">
+              <span className="text-[11px]" style={{ color: "#5C7A5A" }}>
+                essencial: {Math.round(essentialBreakdown.essentialPct)}% · {money(essentialBreakdown.essential, primaryCurrency)}
+              </span>
+              <span className="text-[11px]" style={{ color: COLORS.rust }}>
+                supérfluo: {Math.round(100 - essentialBreakdown.essentialPct)}% · {money(essentialBreakdown.superfluous, primaryCurrency)}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* add transaction button */}
         <button
-          disabled={pockets.length === 0}
           onClick={() => setShowAddTx(true)}
-          className="w-full flex items-center justify-center gap-1.5 rounded-full py-3 text-sm font-medium mb-4 disabled:opacity-40"
+          className="w-full flex items-center justify-center gap-1.5 rounded-full py-3 text-sm font-medium mb-4"
           style={{ background: COLORS.brass, color: COLORS.paper }}
         >
-          <Plus size={16} /> nova despesa
+          <Plus size={16} /> novo lançamento
         </button>
 
         {/* transaction feed */}
@@ -917,19 +1109,23 @@ export default function FinancesApp() {
                 .sort((a, b) => b.date.localeCompare(a.date))
                 .map((t) => {
                   const pocket = pockets.find((p) => p.id === t.pocketId);
+                  const isInc = t.type === "income";
+                  const isInv = t.type === "investment";
                   return (
                     <div key={t.id} className="flex items-center justify-between py-2.5">
                       <div className="flex items-center gap-3">
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: categoryColor(categories, t.category) }} />
+                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: isInc ? "#5C7A5A" : isInv ? "#5B8AC7" : categoryColor(categories, t.category) }} />
                         <div>
                           <p className="text-sm">{t.description || t.category}</p>
                           <p className="text-[11px]" style={{ color: COLORS.inkSoft }}>
-                            {t.category} · {pocket ? pocket.name : "—"} · {t.date.split("-").reverse().join("/")}
+                            {t.category} · {t.paymentMethod || (pocket ? pocket.name : "—")}{pocket && t.paymentMethod ? ` · ${pocket.name}` : ""} · {t.date.split("-").reverse().join("/")}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="font-mono text-sm">{money(t.amount, t.currency)}</span>
+                        <span className="font-mono text-sm" style={{ color: isInc ? "#5C7A5A" : isInv ? "#5B8AC7" : COLORS.ink }}>
+                          {isInc ? "+" : isInv ? "→" : ""}{money(t.amount, t.currency)}
+                        </span>
                         <button onClick={() => deleteTransaction(t.id)} aria-label="Remover lançamento">
                           <Trash2 size={13} style={{ color: COLORS.inkSoft }} />
                         </button>
@@ -951,6 +1147,7 @@ export default function FinancesApp() {
           categories={categories}
           onAddCategory={addCategory}
           onDeleteCategory={deleteCategory}
+          onToggleEssential={toggleCategoryEssential}
           stats={{
             pockets: pockets.length,
             transactions: transactions.length,
@@ -1007,12 +1204,23 @@ export default function FinancesApp() {
           onSave={(t) => { addTransaction(t); setShowAddTx(false); }}
         />
       )}
+      {(showAddBill || editingBill) && (
+        <BillModal
+          COLORS={COLORS}
+          initialBill={editingBill}
+          onClose={() => { setShowAddBill(false); setEditingBill(null); }}
+          onSave={(b) => {
+            if (editingBill) { updateBill(editingBill.id, b); setEditingBill(null); }
+            else { addBill(b); setShowAddBill(false); }
+          }}
+        />
+      )}
     </div>
   );
 }
 
 // ---------- profile page ----------
-function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, onAddCategory, onDeleteCategory }) {
+function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, onAddCategory, onDeleteCategory, onToggleEssential }) {
   const [editing, setEditing] = useState(false);
   const [nameDraft, setNameDraft] = useState(profile.name);
   const [newCategory, setNewCategory] = useState("");
@@ -1133,7 +1341,8 @@ function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, 
       </div>
 
       <div className="rounded-2xl p-4 mt-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
-        <p className="text-xs uppercase tracking-wider mb-3" style={{ color: COLORS.inkSoft }}>categorias</p>
+        <p className="text-xs uppercase tracking-wider mb-1" style={{ color: COLORS.inkSoft }}>categorias</p>
+        <p className="text-[10px] mb-3" style={{ color: COLORS.inkSoft }}>toque na palavra "essencial/supérfluo" pra alternar</p>
         <div className="flex flex-wrap gap-2 mb-3">
           {categories.map((c) => (
             <span
@@ -1143,6 +1352,13 @@ function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, 
             >
               <span className="w-2 h-2 rounded-full" style={{ background: c.color }} />
               {c.name}
+              <button
+                onClick={() => onToggleEssential(c.name)}
+                className="text-[9px] px-1.5 py-0.5 rounded-full"
+                style={{ background: c.essential !== false ? "#5C7A5A22" : `${COLORS.rust}22`, color: c.essential !== false ? "#5C7A5A" : COLORS.rust }}
+              >
+                {c.essential !== false ? "essencial" : "supérfluo"}
+              </button>
               <button onClick={() => onDeleteCategory(c.name)} aria-label={`Remover ${c.name}`}>
                 <X size={12} style={{ color: COLORS.inkSoft }} />
               </button>
@@ -1262,9 +1478,11 @@ function addMonthsToDate(dateStr, n) {
 }
 
 function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, onClose, onSave, COLORS }) {
+  const [type, setType] = useState("expense");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState(categories[0]?.name || "");
   const [pocketId, setPocketId] = useState(defaultPocketId || pockets[0]?.id || "");
+  const [paymentMethod, setPaymentMethod] = useState(pockets.length ? "Cartão de crédito" : "Pix");
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(defaultDate);
   const [isInstallment, setIsInstallment] = useState(false);
@@ -1275,14 +1493,17 @@ function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, o
   const currency = selectedPocket?.currency || "BRL";
   const n = Math.max(2, Number(installments) || 2);
   const perInstallment = isInstallment && amount ? Number(amount) / n : null;
+  const isIncome = type === "income";
+  const isInvestment = type === "investment";
 
   function submit(e) {
     e.preventDefault();
-    if (!amount || !pocketId) return;
+    if (!amount) return;
 
-    if (!isInstallment) {
+    if (!isInstallment || isIncome || isInvestment) {
       onSave({
-        id: String(Date.now()), amount: Number(amount), category, pocketId, description, date, currency,
+        id: String(Date.now()), amount: Number(amount), category, pocketId: pocketId || null,
+        paymentMethod, description, date, currency, type,
       });
       return;
     }
@@ -1295,23 +1516,51 @@ function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, o
       id: `${groupId}-${i}`,
       amount: i === n - 1 ? Math.round((base + remainder) * 100) / 100 : base,
       category,
-      pocketId,
+      pocketId: pocketId || null,
+      paymentMethod,
       description: description ? `${description} (${i + 1}/${n})` : `Parcela ${i + 1}/${n}`,
       date: addMonthsToDate(date, i),
       currency,
+      type,
       installmentGroup: groupId,
     }));
     onSave(list);
   }
 
   return (
-    <ModalShell title="Nova despesa" onClose={onClose} COLORS={COLORS}>
+    <ModalShell title={isIncome ? "Nova receita" : isInvestment ? "Novo investimento" : "Nova despesa"} onClose={onClose} COLORS={COLORS}>
       <form onSubmit={submit} className="space-y-3">
-        <Field label="Bolso / cartão" COLORS={COLORS}>
+        <div className="flex rounded-full overflow-hidden" style={{ border: `1px solid ${COLORS.line}` }}>
+          <button type="button" onClick={() => setType("expense")}
+            className="flex-1 py-2 text-[11px] font-medium"
+            style={{ background: type === "expense" ? COLORS.brass : "transparent", color: type === "expense" ? COLORS.paper : COLORS.inkSoft }}>
+            despesa
+          </button>
+          <button type="button" onClick={() => setType("income")}
+            className="flex-1 py-2 text-[11px] font-medium"
+            style={{ background: isIncome ? "#5C7A5A" : "transparent", color: isIncome ? "#fff" : COLORS.inkSoft }}>
+            receita
+          </button>
+          <button type="button" onClick={() => setType("investment")}
+            className="flex-1 py-2 text-[11px] font-medium"
+            style={{ background: isInvestment ? "#5B8AC7" : "transparent", color: isInvestment ? "#fff" : COLORS.inkSoft }}>
+            investimento
+          </button>
+        </div>
+
+        <Field label="Forma de pagamento" COLORS={COLORS}>
+          <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={inputStyle}>
+            {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </Field>
+
+        <Field label="Bolso / cartão (opcional)" COLORS={COLORS}>
           <select value={pocketId} onChange={(e) => setPocketId(e.target.value)} style={inputStyle}>
+            <option value="">— nenhum —</option>
             {pockets.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.currency || "BRL"})</option>)}
           </select>
         </Field>
+
         <Field label={`Valor total (${CURRENCIES[currency].symbol})`} COLORS={COLORS}>
           <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="0" step="0.01"
             placeholder="89,90" className="input" style={inputStyle} autoFocus />
@@ -1322,19 +1571,21 @@ function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, o
           </select>
         </Field>
         <Field label="Descrição (opcional)" COLORS={COLORS}>
-          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Mercado, uber…"
+          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder={isIncome ? "Venda da loja, salário…" : "Mercado, uber…"}
             className="input" style={inputStyle} />
         </Field>
         <Field label="Data" COLORS={COLORS}>
           <input value={date} onChange={(e) => setDate(e.target.value)} type="date" style={inputStyle} />
         </Field>
 
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input type="checkbox" checked={isInstallment} onChange={(e) => setIsInstallment(e.target.checked)} />
-          <span className="text-xs" style={{ color: COLORS.inkSoft }}>compra parcelada</span>
-        </label>
+        {type === "expense" && (
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" checked={isInstallment} onChange={(e) => setIsInstallment(e.target.checked)} />
+            <span className="text-xs" style={{ color: COLORS.inkSoft }}>compra parcelada</span>
+          </label>
+        )}
 
-        {isInstallment && (
+        {type === "expense" && isInstallment && (
           <div className="rounded-xl p-3" style={{ background: `${COLORS.brass}11`, border: `1px solid ${COLORS.line}` }}>
             <Field label="Número de parcelas" COLORS={COLORS}>
               <input value={installments} onChange={(e) => setInstallments(e.target.value.replace(/\D/g, "").slice(0, 2))}
@@ -1349,8 +1600,65 @@ function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, o
         )}
 
         <button type="submit" className="w-full mt-2 rounded-full py-2.5 text-sm font-medium"
+          style={{ background: isIncome ? "#5C7A5A" : isInvestment ? "#5B8AC7" : COLORS.brass, color: "#fff" }}>
+          {isIncome ? "Adicionar receita" : isInvestment ? "Adicionar investimento" : (isInstallment ? "Adicionar parcelas" : "Adicionar despesa")}
+        </button>
+      </form>
+    </ModalShell>
+  );
+}
+
+function BillModal({ onClose, onSave, COLORS, initialBill }) {
+  const [name, setName] = useState(initialBill?.name || "");
+  const [amount, setAmount] = useState(initialBill ? String(initialBill.amount) : "");
+  const [currency, setCurrency] = useState(initialBill?.currency || "BRL");
+  const [dueDay, setDueDay] = useState(initialBill?.dueDay ? String(initialBill.dueDay) : "");
+  const [error, setError] = useState("");
+  const inputStyle = getInputStyle(COLORS);
+  const isEditing = !!initialBill;
+
+  function submit(e) {
+    e.preventDefault();
+    if (!name.trim()) { setError("Dá um nome pra essa conta."); return; }
+    if (!amount || Number(amount) <= 0) { setError("Preenche o valor (precisa ser maior que zero)."); return; }
+    const dd = Math.min(31, Math.max(1, Number(dueDay) || 1));
+    setError("");
+    onSave({
+      id: initialBill?.id || String(Date.now()),
+      name: name.trim(), amount: Number(amount), currency, dueDay: dd,
+      paidMonths: initialBill?.paidMonths || [],
+    });
+  }
+
+  return (
+    <ModalShell title={isEditing ? "Editar conta" : "Nova conta a pagar"} onClose={onClose} COLORS={COLORS}>
+      <form onSubmit={submit} className="space-y-3">
+        <Field label="Nome da conta" COLORS={COLORS}>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Luz, aluguel, internet…"
+            className="input" style={inputStyle} autoFocus />
+        </Field>
+        <Field label="Moeda" COLORS={COLORS}>
+          <select value={currency} onChange={(e) => setCurrency(e.target.value)} style={inputStyle}>
+            {CURRENCY_CODES.map((c) => <option key={c} value={c}>{CURRENCIES[c].label}</option>)}
+          </select>
+        </Field>
+        <Field label={`Valor (${CURRENCIES[currency].symbol})`} COLORS={COLORS}>
+          <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="0" step="0.01"
+            placeholder="150" className="input" style={inputStyle} />
+        </Field>
+        <Field label="Dia do vencimento" COLORS={COLORS}>
+          <input value={dueDay} onChange={(e) => setDueDay(e.target.value.replace(/\D/g, "").slice(0, 2))}
+            type="number" min="1" max="31" placeholder="Ex: 10" className="input" style={inputStyle} />
+        </Field>
+        <p className="text-[11px]" style={{ color: COLORS.inkSoft }}>
+          Essa conta se repete todo mês. Você marca como paga direto na lista do painel.
+        </p>
+        {error && (
+          <p className="text-xs" style={{ color: COLORS.rust }}>{error}</p>
+        )}
+        <button type="submit" className="w-full mt-2 rounded-full py-2.5 text-sm font-medium"
           style={{ background: COLORS.brass, color: COLORS.paper }}>
-          {isInstallment ? "Adicionar parcelas" : "Adicionar despesa"}
+          {isEditing ? "Salvar alterações" : "Salvar conta"}
         </button>
       </form>
     </ModalShell>
