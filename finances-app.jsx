@@ -185,6 +185,7 @@ export default function FinancesApp() {
   const [showAddBill, setShowAddBill] = useState(false);
   const [editingBill, setEditingBill] = useState(null);
   const [view, setView] = useState("dashboard"); // "dashboard" | "profile"
+  const [dashboardMode, setDashboardMode] = useState("home"); // "home" | "detail"
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -820,6 +821,122 @@ export default function FinancesApp() {
           )}
         </div>
 
+        {dashboardMode === "home" && (
+          <>
+            {/* pockets grid */}
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>bolsos e cartões</p>
+              <button onClick={() => setShowAddPocket(true)} className="text-[11px] font-medium" style={{ color: COLORS.brass }}>
+                + novo bolso
+              </button>
+            </div>
+
+            {pockets.length === 0 ? (
+              <div className="rounded-xl border border-dashed p-6 text-center mb-4" style={{ borderColor: COLORS.line }}>
+                <Wallet size={22} className="mx-auto mb-2" style={{ color: COLORS.inkSoft }} />
+                <p className="text-sm mb-3" style={{ color: COLORS.inkSoft }}>Nenhum bolso ainda. Crie um cartão ou bolso para começar a registrar gastos.</p>
+                <button
+                  onClick={() => setShowAddPocket(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-medium"
+                  style={{ background: COLORS.brass, color: COLORS.paper }}
+                >
+                  <Plus size={14} /> criar bolso
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2.5 mb-4">
+                {pockets.map((p) => {
+                  const spent = spentForPocket(p.id);
+                  const pct = p.limit > 0 ? Math.min(100, (spent / p.limit) * 100) : 0;
+                  const over = spent > p.limit;
+                  const remaining = p.limit - spent;
+                  const r = 26, circumference = 2 * Math.PI * r;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => { setSelectedPockets([p.id]); setDashboardMode("detail"); }}
+                      className="rounded-2xl p-3 flex flex-col items-center gap-1.5 relative text-center"
+                      style={{ background: COLORS.paper, border: `1px solid ${p.id === primaryPocketId ? p.color || COLORS.brass : COLORS.line}` }}
+                    >
+                      {p.id === primaryPocketId && (
+                        <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: p.color || COLORS.brass }}>
+                          <Star size={9} color="#fff" fill="#fff" />
+                        </span>
+                      )}
+                      <svg width="58" height="58" viewBox="0 0 58 58">
+                        <circle cx="29" cy="29" r={r} fill="none" stroke={COLORS.line} strokeWidth="6" />
+                        <circle cx="29" cy="29" r={r} fill="none" stroke={over ? COLORS.rust : (p.color || COLORS.brass)} strokeWidth="6"
+                          strokeDasharray={circumference} strokeDashoffset={circumference - (pct / 100) * circumference}
+                          strokeLinecap="round" transform="rotate(-90 29 29)" />
+                        <text x="29" y="33" textAnchor="middle" fontSize="11" fontFamily="IBM Plex Mono, monospace" fill={COLORS.ink}>
+                          {Math.round(pct)}%
+                        </text>
+                      </svg>
+                      <p className="text-xs font-medium truncate w-full">{p.name}</p>
+                      <p className="font-mono text-[10px]" style={{ color: over ? COLORS.rust : COLORS.inkSoft }}>
+                        {over ? `estourou ${money(Math.abs(remaining), p.currency)}` : `faltam ${money(remaining, p.currency)}`}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* investments */}
+            {investedAllTime > 0 && (
+              <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>investimentos</p>
+                  <span className="w-2 h-2 rounded-full" style={{ background: "#5B8AC7" }} />
+                </div>
+                <div className="flex items-end justify-between">
+                  <div>
+                    <p className="text-[10px]" style={{ color: COLORS.inkSoft }}>investido este mês</p>
+                    <p className="font-mono text-base" style={{ color: "#5B8AC7" }}>{money(investedThisPeriod, primaryCurrency)}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px]" style={{ color: COLORS.inkSoft }}>total guardado</p>
+                    <p className="font-mono text-sm" style={{ color: COLORS.ink }}>{money(investedAllTime, primaryCurrency)}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* essential vs superfluous */}
+            {essentialBreakdown.total > 0 && (
+              <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+                <p className="text-xs uppercase tracking-wider mb-2" style={{ color: COLORS.inkSoft }}>essencial vs supérfluo</p>
+                <div className="w-full h-2.5 rounded-full overflow-hidden flex" style={{ background: COLORS.line }}>
+                  <div style={{ width: `${essentialBreakdown.essentialPct}%`, background: "#5C7A5A" }} />
+                  <div style={{ width: `${100 - essentialBreakdown.essentialPct}%`, background: COLORS.rust }} />
+                </div>
+                <div className="flex justify-between mt-1.5">
+                  <span className="text-[11px]" style={{ color: "#5C7A5A" }}>
+                    essencial: {Math.round(essentialBreakdown.essentialPct)}% · {money(essentialBreakdown.essential, primaryCurrency)}
+                  </span>
+                  <span className="text-[11px]" style={{ color: COLORS.rust }}>
+                    supérfluo: {Math.round(100 - essentialBreakdown.essentialPct)}% · {money(essentialBreakdown.superfluous, primaryCurrency)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={() => setDashboardMode("detail")}
+              className="w-full flex items-center justify-center gap-1.5 rounded-full py-3 text-sm font-medium mb-4"
+              style={{ background: COLORS.brass, color: COLORS.paper }}
+            >
+              <Plus size={16} /> preencher / ver lançamentos
+            </button>
+          </>
+        )}
+
+        {dashboardMode === "detail" && (
+          <>
+            <button onClick={() => setDashboardMode("home")} className="flex items-center gap-1 mb-3 text-xs font-medium" style={{ color: COLORS.inkSoft }}>
+              <ChevronLeft size={14} /> voltar pro início
+            </button>
+
         {/* pocket filter chips */}
         {pockets.length > 0 && (
           <>
@@ -903,88 +1020,6 @@ export default function FinancesApp() {
           </div>
         )}
 
-        {/* pockets as ring chips */}
-        <div className="flex items-center justify-between mb-1.5">
-          <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>bolsos e cartões</p>
-        </div>
-
-        {pockets.length === 0 && (
-          <div className="rounded-xl border border-dashed p-6 text-center mb-4" style={{ borderColor: COLORS.line }}>
-            <Wallet size={22} className="mx-auto mb-2" style={{ color: COLORS.inkSoft }} />
-            <p className="text-sm mb-3" style={{ color: COLORS.inkSoft }}>Nenhum bolso ainda. Crie um cartão ou bolso para começar a registrar gastos.</p>
-            <button
-              onClick={() => setShowAddPocket(true)}
-              className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-medium"
-              style={{ background: COLORS.brass, color: COLORS.paper }}
-            >
-              <Plus size={14} /> criar bolso
-            </button>
-          </div>
-        )}
-
-        <div className="flex gap-2 mb-4 overflow-x-auto">
-          {pockets.map((p) => {
-            const spent = spentForPocket(p.id);
-            const pct = p.limit > 0 ? Math.min(100, (spent / p.limit) * 100) : 0;
-            const over = spent > p.limit;
-            const remaining = p.limit - spent;
-            const r = 20, circumference = 2 * Math.PI * r;
-            return (
-              <div key={p.id} className="flex-shrink-0 rounded-2xl p-3 pt-4 flex items-center gap-2.5 relative"
-                style={{ background: COLORS.paper, border: `1px solid ${p.id === primaryPocketId ? p.color || COLORS.brass : COLORS.line}`, width: 168 }}>
-                {p.id === primaryPocketId && (
-                  <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: p.color || COLORS.brass }}>
-                    <Star size={9} color="#fff" fill="#fff" />
-                  </span>
-                )}
-                <svg width="46" height="46" viewBox="0 0 46 46" className="flex-shrink-0">
-                  <circle cx="23" cy="23" r={r} fill="none" stroke={COLORS.line} strokeWidth="5" />
-                  <circle cx="23" cy="23" r={r} fill="none" stroke={over ? COLORS.rust : (p.color || COLORS.brass)} strokeWidth="5"
-                    strokeDasharray={circumference} strokeDashoffset={circumference - (pct / 100) * circumference}
-                    strokeLinecap="round" transform="rotate(-90 23 23)" />
-                </svg>
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium truncate">{p.name}</p>
-                  <p className="font-mono text-[10px]" style={{ color: over ? COLORS.rust : COLORS.inkSoft }}>
-                    {over ? `estourou ${money(Math.abs(remaining), p.currency)}` : `faltam ${money(remaining, p.currency)}`}
-                  </p>
-                  {p.closingDay && (
-                    <>
-                      <p className="text-[9px]" style={{ color: COLORS.inkSoft }}>fecha dia {p.closingDay}</p>
-                      <p className="text-[9px]" style={{ color: COLORS.inkSoft }}>
-                        melhor dia: {p.closingDay === 31 ? 1 : p.closingDay + 1}
-                      </p>
-                    </>
-                  )}
-                </div>
-                <div className="flex flex-col gap-1.5 flex-shrink-0">
-                  <button onClick={() => setPrimaryPocket(p.id === primaryPocketId ? null : p.id)} aria-label="Marcar como principal">
-                    <Star size={12} style={{ color: p.id === primaryPocketId ? (p.color || COLORS.brass) : COLORS.inkSoft }}
-                      fill={p.id === primaryPocketId ? (p.color || COLORS.brass) : "none"} />
-                  </button>
-                  <button onClick={() => setEditingPocket(p)} aria-label="Editar bolso">
-                    <Pencil size={12} style={{ color: COLORS.inkSoft }} />
-                  </button>
-                  <button onClick={() => deletePocket(p.id)} aria-label="Remover bolso">
-                    <Trash2 size={12} style={{ color: COLORS.inkSoft }} />
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-          <button
-            onClick={() => setShowAddPocket(true)}
-            className="flex-shrink-0 rounded-2xl flex items-center justify-center gap-1.5 px-4 py-3"
-            style={{ background: COLORS.brass, minWidth: pockets.length === 0 ? 160 : 52 }}
-            aria-label="Novo bolso"
-          >
-            <Plus size={18} color={COLORS.paper} />
-            {pockets.length === 0 && (
-              <span className="text-xs font-medium" style={{ color: COLORS.paper }}>novo bolso</span>
-            )}
-          </button>
-        </div>
-
         {/* contas a pagar */}
         <div className="flex items-center justify-between mb-1.5">
           <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>contas a pagar</p>
@@ -1047,45 +1082,6 @@ export default function FinancesApp() {
           </div>
         )}
 
-        {/* investments */}
-        {investedAllTime > 0 && (
-          <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>investimentos</p>
-              <span className="w-2 h-2 rounded-full" style={{ background: "#5B8AC7" }} />
-            </div>
-            <div className="flex items-end justify-between">
-              <div>
-                <p className="text-[10px]" style={{ color: COLORS.inkSoft }}>investido este mês</p>
-                <p className="font-mono text-base" style={{ color: "#5B8AC7" }}>{money(investedThisPeriod, primaryCurrency)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px]" style={{ color: COLORS.inkSoft }}>total guardado</p>
-                <p className="font-mono text-sm" style={{ color: COLORS.ink }}>{money(investedAllTime, primaryCurrency)}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* essential vs superfluous */}
-        {essentialBreakdown.total > 0 && (
-          <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
-            <p className="text-xs uppercase tracking-wider mb-2" style={{ color: COLORS.inkSoft }}>essencial vs supérfluo</p>
-            <div className="w-full h-2.5 rounded-full overflow-hidden flex" style={{ background: COLORS.line }}>
-              <div style={{ width: `${essentialBreakdown.essentialPct}%`, background: "#5C7A5A" }} />
-              <div style={{ width: `${100 - essentialBreakdown.essentialPct}%`, background: COLORS.rust }} />
-            </div>
-            <div className="flex justify-between mt-1.5">
-              <span className="text-[11px]" style={{ color: "#5C7A5A" }}>
-                essencial: {Math.round(essentialBreakdown.essentialPct)}% · {money(essentialBreakdown.essential, primaryCurrency)}
-              </span>
-              <span className="text-[11px]" style={{ color: COLORS.rust }}>
-                supérfluo: {Math.round(100 - essentialBreakdown.essentialPct)}% · {money(essentialBreakdown.superfluous, primaryCurrency)}
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* add transaction button */}
         <button
           onClick={() => setShowAddTx(true)}
@@ -1136,6 +1132,8 @@ export default function FinancesApp() {
             </div>
           )}
         </div>
+          </>
+        )}
       </div>
       )}
 
