@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Plus, ChevronLeft, ChevronRight, CreditCard, X, Trash2, Wallet, User, LayoutGrid, Pencil, Check,
-  TrendingUp, TrendingDown, Calendar, Flame, Star, Search,
+  TrendingUp, TrendingDown, Calendar, Flame, Star, Search, List, Eye, EyeOff, Target,
 } from "lucide-react";
 
 // ---------- design tokens ----------
@@ -61,14 +61,65 @@ function nextPocketColor(existing) {
   return POCKET_PALETTE[existing.length % POCKET_PALETTE.length];
 }
 
-const MONEY_QUOTES = [
-  { text: "Não poupe o que sobra depois de gastar; gaste o que sobra depois de poupar.", author: "Warren Buffett" },
-  { text: "Quem não controla seus gastos, por mais que ganhe, sempre viverá endividado.", author: "Ayres de Andrade" },
-  { text: "Um centavo economizado é um centavo ganho.", author: "Benjamin Franklin" },
-  { text: "Não é sobre quanto você ganha, é sobre quanto você guarda.", author: "Robert Kiyosaki" },
-  { text: "Disciplina é a ponte entre metas e conquistas.", author: "Jim Rohn" },
-  { text: "Cuide dos centavos que os reais cuidam de si mesmos.", author: "Provérbio popular" },
+// Datas comemorativas — não são feriados (não folga), mas importam pro
+// bolso porque costumam vir com gasto extra (presentes, jantar etc).
+const COMMEMORATIVE_DATES_FIXED = [
+  { month: 2, day: 14, name: "Dia dos Namorados (internacional)" },
+  { month: 4, day: 23, name: "Dia de São Jorge" },
+  { month: 6, day: 12, name: "Dia dos Namorados" },
+  { month: 6, day: 24, name: "Dia de São João" },
+  { month: 10, day: 12, name: "Dia das Crianças" },
+  { month: 10, day: 31, name: "Halloween" },
+  { month: 11, day: 15, name: "Black Friday (aprox.)" },
+  { month: 12, day: 24, name: "Véspera de Natal" },
+  { month: 12, day: 31, name: "Véspera de Ano Novo" },
 ];
+
+// Retorna a data do 2º domingo de um mês (usado pro Dia das Mães e dos Pais)
+function nthSunday(year, month, n) {
+  const first = new Date(year, month - 1, 1);
+  const firstSunday = 1 + ((7 - first.getDay()) % 7);
+  return new Date(year, month - 1, firstSunday + (n - 1) * 7);
+}
+
+const HOLIDAYS_FIXED = [
+  { month: 1, day: 1, name: "Ano Novo" },
+  { month: 4, day: 21, name: "Tiradentes" },
+  { month: 5, day: 1, name: "Dia do Trabalho" },
+  { month: 9, day: 7, name: "Independência do Brasil" },
+  { month: 10, day: 12, name: "Nossa Senhora Aparecida" },
+  { month: 11, day: 2, name: "Finados" },
+  { month: 11, day: 15, name: "Proclamação da República" },
+  { month: 11, day: 20, name: "Consciência Negra" },
+  { month: 12, day: 25, name: "Natal" },
+];
+
+function getEasterDate(year) {
+  // Meeus/Jones/Butcher algorithm
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+function getHolidaysForYear(year) {
+  const fixed = HOLIDAYS_FIXED.map((h) => ({ date: new Date(year, h.month - 1, h.day), name: h.name, kind: "feriado" }));
+  const easter = getEasterDate(year);
+  const addDays = (date, n) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + n);
+  const movable = [
+    { date: addDays(easter, -2), name: "Sexta-feira Santa", kind: "feriado" },
+  ];
+  const commemorative = [
+    ...COMMEMORATIVE_DATES_FIXED.map((h) => ({ date: new Date(year, h.month - 1, h.day), name: h.name, kind: "data" })),
+    { date: nthSunday(year, 5, 2), name: "Dia das Mães", kind: "data" },
+    { date: nthSunday(year, 8, 2), name: "Dia dos Pais", kind: "data" },
+  ];
+  return [...fixed, ...movable, ...commemorative].sort((a, b) => a.date - b.date);
+}
 
 const MONTHS = [
   "Janeiro","Fevereiro","Março","Abril","Maio","Junho",
@@ -101,6 +152,17 @@ function money(n, code = "BRL") {
 
 function monthKey(y, m) { return `${y}-${String(m + 1).padStart(2, "0")}`; }
 
+// Returns YYYY-MM-DD using the date's LOCAL calendar day, unlike
+// Date.prototype.toISOString() which converts to UTC first and can shift
+// the date by a day depending on the user's timezone (e.g. late evening in
+// Brazil, UTC-3, would already be "tomorrow" in UTC).
+function toLocalISO(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
 // Given a calendar year/month being viewed and a card's closing day, returns
 // the [start, end] dates (as YYYY-MM-DD strings) of that card's billing
 // cycle for that month. Example: closingDay=3 → cycle runs from the 4th of
@@ -108,7 +170,7 @@ function monthKey(y, m) { return `${y}-${String(m + 1).padStart(2, "0")}`; }
 function getCycleBounds(year, month, closingDay) {
   const end = new Date(year, month, closingDay);
   const start = new Date(year, month - 1, closingDay + 1);
-  const toISO = (d) => d.toISOString().slice(0, 10);
+  const toISO = (d) => toLocalISO(d);
   return { start: toISO(start), end: toISO(end) };
 }
 
@@ -125,7 +187,7 @@ function getCycleMonthForDate(date, closingDay) {
   return { year, month };
 }
 
-const DEFAULT_PROFILE = { name: "Minha conta", theme: "navy", primaryPocketId: null, createdAt: new Date().toISOString().slice(0, 10) };
+const DEFAULT_PROFILE = { name: "Minha conta", theme: "navy", primaryPocketId: null, investmentGoal: 0, createdAt: toLocalISO(new Date()) };
 
 // ---------- storage helpers ----------
 async function loadData() {
@@ -185,28 +247,83 @@ export default function FinancesApp() {
   const [showAddBill, setShowAddBill] = useState(false);
   const [editingBill, setEditingBill] = useState(null);
   const [view, setView] = useState("dashboard"); // "dashboard" | "profile"
-  const [dashboardMode, setDashboardMode] = useState("home"); // "home" | "detail"
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
   const [showAddTx, setShowAddTx] = useState(false);
+  const [quickAddType, setQuickAddType] = useState(null);
+  const [defaultPaymentMethod, setDefaultPaymentMethod] = useState(null);
+  const [txConfig, setTxConfig] = useState({ allowedTypes: null, lockPaymentMethod: false });
+  const [fabOpen, setFabOpen] = useState(false);
+  const [showGoalEdit, setShowGoalEdit] = useState(false);
+  const [quotes, setQuotes] = useState({});
+  const [quotesLoading, setQuotesLoading] = useState(false);
+  const [quotesError, setQuotesError] = useState("");
+  const [quoteSearch, setQuoteSearch] = useState("");
+  const [extraQuoteCodes, setExtraQuoteCodes] = useState([]);
+
+  const fetchQuotes = useCallback((codes) => {
+    if (codes.length === 0) return;
+    setQuotesLoading(true);
+    setQuotesError("");
+    const pairs = codes.map((c) => `${c}-BRL`).join(",");
+    fetch(`https://economia.awesomeapi.com.br/json/last/${pairs}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.message) throw new Error(data.message);
+        setQuotes((prev) => ({ ...prev, ...data }));
+      })
+      .catch(() => setQuotesError("Não consegui buscar as cotações agora. Tenta de novo."))
+      .finally(() => setQuotesLoading(false));
+  }, []);
+
+  useEffect(() => {
+    fetchQuotes(["USD", "EUR", "BTC"]);
+  }, [fetchQuotes]);
+
+  function searchQuote() {
+    const code = quoteSearch.trim().toUpperCase();
+    if (!code) return;
+    fetchQuotes([code]);
+    setExtraQuoteCodes((prev) => (prev.includes(code) ? prev : [...prev, code]));
+    setQuoteSearch("");
+  }
+
+  const [typeFilter, setTypeFilter] = useState("all"); // "all" | "expense" | "income" | "investment"
   const [showAddPocket, setShowAddPocket] = useState(false);
   const [editingPocket, setEditingPocket] = useState(null);
   const [activePocketId, setActivePocketId] = useState(null);
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [selectedPockets, setSelectedPockets] = useState([]);
-  const [weekChartClicked, setWeekChartClicked] = useState(false);
-  const [weekAnchorISO, setWeekAnchorISO] = useState(() => new Date().toISOString().slice(0, 10));
-  const [selectedDayISO, setSelectedDayISO] = useState(() => new Date().toISOString().slice(0, 10));
-  const [quoteIndex, setQuoteIndex] = useState(0);
+  const [valuesHidden, setValuesHidden] = useState(false);
+  const [weekAnchorISO, setWeekAnchorISO] = useState(() => toLocalISO(new Date()));
+  const [selectedDayISO, setSelectedDayISO] = useState(() => toLocalISO(new Date()));
+  const [holidayIndex, setHolidayIndex] = useState(0);
+
+  const holidaysThisMonth = useMemo(() => {
+    const realToday = new Date();
+    const holidays = getHolidaysForYear(realToday.getFullYear());
+    return holidays.filter((h) => h.date.getMonth() === realToday.getMonth());
+  }, []);
+
+  const nextHoliday = useMemo(() => {
+    const realToday = new Date();
+    const todayStart = new Date(realToday.getFullYear(), realToday.getMonth(), realToday.getDate());
+    const candidates = [
+      ...getHolidaysForYear(realToday.getFullYear()),
+      ...getHolidaysForYear(realToday.getFullYear() + 1),
+    ];
+    return candidates.find((h) => h.date >= todayStart) || null;
+  }, []);
 
   useEffect(() => {
+    if (holidaysThisMonth.length <= 1) return;
     const id = setInterval(() => {
-      setQuoteIndex((i) => (i + 1) % MONEY_QUOTES.length);
+      setHolidayIndex((i) => (i + 1) % holidaysThisMonth.length);
     }, 6000);
     return () => clearInterval(id);
-  }, []);
+  }, [holidaysThisMonth.length]);
   const COLORS = useMemo(() => getTheme(profile.theme), [profile.theme]);
   const perforatedStyle = {
     backgroundImage: `radial-gradient(circle, ${COLORS.page} 2px, transparent 2.5px)`,
@@ -233,12 +350,12 @@ export default function FinancesApp() {
     : null;
 
   const isCurrentMonth = activeCycle
-    ? (today.toISOString().slice(0, 10) >= activeCycle.start && today.toISOString().slice(0, 10) <= activeCycle.end)
+    ? (toLocalISO(today) >= activeCycle.start && toLocalISO(today) <= activeCycle.end)
     : (month === today.getMonth() && year === today.getFullYear());
 
   useEffect(() => {
     if (loading || !primaryPocket?.closingDay) return;
-    const todayISO = today.toISOString().slice(0, 10);
+    const todayISO = toLocalISO(today);
     const cycle = getCycleBounds(year, month, primaryPocket.closingDay);
     if (todayISO < cycle.start || todayISO > cycle.end) {
       const { year: cy, month: cm } = getCycleMonthForDate(today, primaryPocket.closingDay);
@@ -350,10 +467,33 @@ export default function FinancesApp() {
     .filter((t) => t.type === "investment" && (t.currency || "BRL") === primaryCurrency)
     .reduce((s, t) => s + Number(t.amount), 0);
 
+  const investedLastMonth = (() => {
+    let pm = month - 1, py = year;
+    if (pm < 0) { pm = 11; py -= 1; }
+    const pKey = monthKey(py, pm);
+    return transactions
+      .filter((t) => t.type === "investment" && t.date.slice(0, 7) === pKey && (t.currency || "BRL") === primaryCurrency)
+      .reduce((s, t) => s + Number(t.amount), 0);
+  })();
+  const investmentTrend = investedLastMonth > 0
+    ? Math.round(((investedThisPeriod - investedLastMonth) / investedLastMonth) * 100)
+    : null;
+
+  const recentInvestments = transactions
+    .filter((t) => t.type === "investment")
+    .slice()
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 3);
+
   const filteredMonthTx = useMemo(() => {
     if (selectedCategories.length === 0) return pocketFilteredMonthTx;
     return pocketFilteredMonthTx.filter((t) => selectedCategories.includes(t.category));
   }, [pocketFilteredMonthTx, selectedCategories]);
+
+  const totalOut = filteredMonthTx
+    .filter((t) => t.type === "expense" && t.paymentMethod && t.paymentMethod !== "Cartão de crédito")
+    .filter((t) => (t.currency || "BRL") === primaryCurrency)
+    .reduce((s, t) => s + Number(t.amount), 0);
 
   function togglePocketFilter(id) {
     setSelectedPockets((prev) =>
@@ -370,7 +510,7 @@ export default function FinancesApp() {
     const days = [];
     for (let i = 0; i < 7; i++) {
       const d = new Date(sunday.getFullYear(), sunday.getMonth(), sunday.getDate() + i);
-      const iso = d.toISOString().slice(0, 10);
+      const iso = toLocalISO(d);
       const total = transactions
         .filter((t) => t.date === iso && t.type !== "income" && t.type !== "investment" && (t.currency || "BRL") === primaryCurrency)
         .reduce((s, t) => s + Number(t.amount), 0);
@@ -380,7 +520,7 @@ export default function FinancesApp() {
     return { days, weekTotal };
   }, [transactions, weekAnchorISO, primaryCurrency]);
 
-  const todayISO = today.toISOString().slice(0, 10);
+  const todayISO = toLocalISO(today);
 
   function goToDate(iso) {
     setSelectedDayISO(iso);
@@ -399,7 +539,7 @@ export default function FinancesApp() {
   function shiftWeek(delta) {
     const selD = new Date(selectedDayISO + "T00:00:00");
     selD.setDate(selD.getDate() + delta * 7);
-    goToDate(selD.toISOString().slice(0, 10));
+    goToDate(toLocalISO(selD));
   }
 
   const selectedDayLabel = (() => {
@@ -413,7 +553,7 @@ export default function FinancesApp() {
   })();
 
   const daysLeftInMonth = useMemo(() => {
-    const todayISO = today.toISOString().slice(0, 10);
+    const todayISO = toLocalISO(today);
     if (activeCycle) {
       if (todayISO < activeCycle.start || todayISO > activeCycle.end) return null;
       const [ey, em, ed] = activeCycle.end.split("-").map(Number);
@@ -458,7 +598,7 @@ export default function FinancesApp() {
   }
 
   function goToToday() {
-    const todayISOStr = today.toISOString().slice(0, 10);
+    const todayISOStr = toLocalISO(today);
     setSelectedDayISO(todayISOStr);
     setWeekAnchorISO(todayISOStr);
     if (primaryPocket?.closingDay) {
@@ -540,6 +680,64 @@ export default function FinancesApp() {
     setActivePocketId(null);
   }
 
+  function exportData() {
+    const backup = {
+      exportedAt: new Date().toISOString(),
+      app: "Finances",
+      version: 1,
+      pockets,
+      transactions,
+      categories,
+      bills,
+      profile,
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const dateStr = toLocalISO(new Date());
+    a.href = url;
+    a.download = `finances-backup-${dateStr}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function importData(file, onDone) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (!data || typeof data !== "object" || data.app !== "Finances") {
+          onDone({ ok: false, message: "Esse arquivo não parece ser um backup do Finances." });
+          return;
+        }
+        const nextPockets = Array.isArray(data.pockets) ? data.pockets : [];
+        const nextTransactions = Array.isArray(data.transactions) ? data.transactions : [];
+        const nextCategories = Array.isArray(data.categories) && data.categories.length ? data.categories : DEFAULT_CATEGORIES;
+        const nextBills = Array.isArray(data.bills) ? data.bills : [];
+        const nextProfile = data.profile && typeof data.profile === "object" ? { ...DEFAULT_PROFILE, ...data.profile } : DEFAULT_PROFILE;
+
+        setPockets(nextPockets);
+        setTransactions(nextTransactions);
+        setCategories(nextCategories);
+        setBills(nextBills);
+        setProfile(nextProfile);
+        savePockets(nextPockets);
+        saveTransactions(nextTransactions);
+        saveCategories(nextCategories);
+        saveBills(nextBills);
+        saveProfile(nextProfile);
+        setActivePocketId(nextPockets[0]?.id || null);
+
+        onDone({ ok: true, message: `Backup restaurado: ${nextTransactions.length} lançamentos, ${nextPockets.length} bolsos.` });
+      } catch (err) {
+        onDone({ ok: false, message: "Não consegui ler esse arquivo. Confere se é o .json certo." });
+      }
+    };
+    reader.readAsText(file);
+  }
+
   function addPocket(pocket) {
     const withColor = { ...pocket, color: pocket.color || nextPocketColor(pockets) };
     const next = [...pockets, withColor];
@@ -615,8 +813,15 @@ export default function FinancesApp() {
             <p className="text-xs" style={{ color: `${COLORS.paper}80` }}>conta, tema e preferências</p>
           )}
 
-          <p key={quoteIndex} className="text-[10px] mb-2 truncate" style={{ color: `${COLORS.paper}55` }}>
-            {MONEY_QUOTES[quoteIndex].text} — {MONEY_QUOTES[quoteIndex].author}
+          <p key={holidayIndex} className="text-[10px] mb-2 truncate" style={{ color: `${COLORS.paper}55` }}>
+            {holidaysThisMonth.length > 0
+              ? (() => {
+                  const h = holidaysThisMonth[holidayIndex % holidaysThisMonth.length];
+                  return `${h.date.getDate()} — ${h.name} (${h.kind === "feriado" ? "feriado" : "data comemorativa"})`;
+                })()
+              : nextHoliday
+                ? `próximo: ${nextHoliday.date.getDate()}/${String(nextHoliday.date.getMonth() + 1).padStart(2, "0")} — ${nextHoliday.name}`
+                : ""}
           </p>
 
           {view === "dashboard" && (
@@ -707,7 +912,9 @@ export default function FinancesApp() {
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px]" style={{ color: `${COLORS.paper}80` }}>total do mês</p>
-              <p className="font-display text-2xl mt-0.5" style={{ color: COLORS.paper }}>{money(totalsByCurrency[primaryCurrency] || 0, primaryCurrency)}</p>
+              <p className="font-display text-2xl mt-0.5" style={{ color: COLORS.paper }}>
+                {valuesHidden ? "••••••" : money(totalsByCurrency[primaryCurrency] || 0, primaryCurrency)}
+              </p>
             </div>
             <div className="text-right">
               <div className="flex items-center gap-1 justify-end">
@@ -719,7 +926,7 @@ export default function FinancesApp() {
                 )}
               </div>
               <p className="font-mono text-sm mt-0.5" style={{ color: COLORS.paper }}>
-                {money((totalsByCurrency[primaryCurrency] || 0) / today.getDate(), primaryCurrency)}
+                {valuesHidden ? "••••" : money((totalsByCurrency[primaryCurrency] || 0) / today.getDate(), primaryCurrency)}
               </p>
             </div>
           </div>
@@ -727,10 +934,10 @@ export default function FinancesApp() {
           {hasIncomeThisPeriod && (
             <div className="flex items-center justify-between mt-2.5 rounded-lg px-2.5 py-2" style={{ background: "rgba(92,122,90,0.18)" }}>
               <p className="text-[10px]" style={{ color: "#A8D2A4" }}>
-                receitas: <span className="font-mono">{money(totalIncomePrimary, primaryCurrency)}</span>
+                receitas: <span className="font-mono">{valuesHidden ? "••••" : money(totalIncomePrimary, primaryCurrency)}</span>
               </p>
               <p className="text-[10px] font-mono" style={{ color: profitPrimary >= 0 ? "#A8D2A4" : COLORS.rust }}>
-                lucro: {money(profitPrimary, primaryCurrency)}
+                lucro: {valuesHidden ? "••••" : money(profitPrimary, primaryCurrency)}
               </p>
             </div>
           )}
@@ -740,10 +947,10 @@ export default function FinancesApp() {
               <div className="flex justify-between mb-1">
                 <p className="text-[10px]" style={{ color: `${COLORS.paper}90` }}>
                   você já gastou <span className="font-mono" style={{ color: COLORS.brassSoft }}>{Math.round(overallPct)}%</span> do seu limite
-                  {primaryPocket ? ` de ${money(totalLimit, overallCurrency)} (${primaryPocket.name})` : ""}
+                  {primaryPocket ? ` de ${valuesHidden ? "••••" : money(totalLimit, overallCurrency)} (${primaryPocket.name})` : ""}
                 </p>
                 <p className="font-mono text-[10px]" style={{ color: `${COLORS.paper}90` }}>
-                  {overallRemaining >= 0 ? `faltam ${money(overallRemaining, overallCurrency)}` : `estourou ${money(Math.abs(overallRemaining), overallCurrency)}`}
+                  {valuesHidden ? "••••" : (overallRemaining >= 0 ? `faltam ${money(overallRemaining, overallCurrency)}` : `estourou ${money(Math.abs(overallRemaining), overallCurrency)}`)}
                 </p>
               </div>
               <div className="w-full h-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.12)" }}>
@@ -809,20 +1016,94 @@ export default function FinancesApp() {
               <ChevronRight size={14} color={`${COLORS.paper}80`} />
             </button>
           </div>
-          <button onClick={() => setWeekChartClicked((v) => !v)} className="w-full text-center mt-1">
+          <button onClick={() => setValuesHidden((v) => !v)} className="w-full flex items-center justify-center gap-1.5 mt-1">
+            {valuesHidden
+              ? <EyeOff size={11} color={`${COLORS.paper}50`} />
+              : <Eye size={11} color={`${COLORS.paper}50`} />}
             <span className="font-mono text-[9px]" style={{ color: `${COLORS.paper}50` }}>
-              {weekChartClicked ? "ocultar total da semana" : "ver total da semana"}
+              {valuesHidden ? "ver todos os valores" : "ocultar todos os valores"}
             </span>
           </button>
-          {weekChartClicked && (
-            <p className="font-mono text-[10px] mt-1 text-center" style={{ color: COLORS.brassSoft }}>
-              total desta semana: {money(weekChart.weekTotal, primaryCurrency)}
-            </p>
-          )}
+          <p className="font-mono text-[10px] mt-1 text-center" style={{ color: COLORS.brassSoft }}>
+            total desta semana: {valuesHidden ? "••••" : money(weekChart.weekTotal, primaryCurrency)}
+          </p>
+
+          <div className="grid grid-cols-4 gap-2 mt-3 pt-3" style={{ borderTop: `1px solid rgba(255,255,255,0.1)` }}>
+            <div>
+              <p className="text-[9px]" style={{ color: `${COLORS.paper}70` }}>gasto (cartão)</p>
+              <p className="font-mono text-xs" style={{ color: COLORS.paper }}>{valuesHidden ? "••••" : money(totalsByCurrency[primaryCurrency] || 0, primaryCurrency)}</p>
+            </div>
+            <div>
+              <p className="text-[9px]" style={{ color: `${COLORS.paper}70` }}>entrou</p>
+              <p className="font-mono text-xs" style={{ color: "#A8D2A4" }}>{valuesHidden ? "••••" : money(totalIncomePrimary, primaryCurrency)}</p>
+            </div>
+            <div>
+              <p className="text-[9px]" style={{ color: `${COLORS.paper}70` }}>saiu (fora)</p>
+              <p className="font-mono text-xs" style={{ color: COLORS.paper }}>{valuesHidden ? "••••" : money(totalOut, primaryCurrency)}</p>
+            </div>
+            <div>
+              <p className="text-[9px]" style={{ color: `${COLORS.paper}70` }}>investido</p>
+              <p className="font-mono text-xs" style={{ color: "#8FBFE8" }}>{valuesHidden ? "••••" : money(investedThisPeriod, primaryCurrency)}</p>
+            </div>
+          </div>
         </div>
 
-        {dashboardMode === "home" && (
-          <>
+        {(() => {
+          const realCurrentKey = monthKey(today.getFullYear(), today.getMonth());
+          const overdueBills = bills.filter((b) => {
+            const paid = (b.paidMonths || []).includes(realCurrentKey);
+            const daysUntil = b.dueDay - today.getDate();
+            return !paid && daysUntil < 0;
+          });
+          const overLimitPockets = pockets.filter((p) => spentForPocket(p.id) > p.limit);
+          const hasAlerts = overdueBills.length > 0 || overLimitPockets.length > 0;
+
+          return (
+            <>
+              {/* alertas urgentes */}
+              {hasAlerts && (
+                <div className="rounded-2xl p-4 mb-4" style={{ background: `${COLORS.rust}14`, border: `1px solid ${COLORS.rust}44` }}>
+                  <p className="text-xs uppercase tracking-wider mb-2 font-medium" style={{ color: COLORS.rust }}>precisa de atenção</p>
+                  <div className="space-y-1.5">
+                    {overdueBills.map((b) => (
+                      <div key={b.id} className="flex items-center gap-2">
+                        <Flame size={13} style={{ color: COLORS.rust }} />
+                        <p className="text-xs" style={{ color: COLORS.rust }}>
+                          "{b.name}" venceu dia {b.dueDay} e ainda não foi paga
+                        </p>
+                      </div>
+                    ))}
+                    {overLimitPockets.map((p) => (
+                      <div key={p.id} className="flex items-center gap-2">
+                        <Flame size={13} style={{ color: COLORS.rust }} />
+                        <p className="text-xs" style={{ color: COLORS.rust }}>
+                          {p.name} estourou o limite em {money(spentForPocket(p.id) - p.limit, p.currency)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* quanto pode gastar — hero */}
+              {overallPct !== null && (
+                <div className="rounded-2xl p-5 mb-4 text-center" style={{ background: COLORS.paper, border: `1.5px solid ${overallRemaining >= 0 ? COLORS.line : COLORS.rust}` }}>
+                  <p className="text-xs uppercase tracking-wider mb-1" style={{ color: COLORS.inkSoft }}>quanto ainda dá pra gastar</p>
+                  <p className="font-display text-4xl" style={{ color: overallRemaining >= 0 ? COLORS.ink : COLORS.rust }}>
+                    {money(overallRemaining, overallCurrency)}
+                  </p>
+                  {daysLeftInMonth > 0 && overallRemaining > 0 && (
+                    <p className="text-xs mt-1" style={{ color: COLORS.inkSoft }}>
+                      ou {money(overallRemaining / daysLeftInMonth, overallCurrency)}/dia até o fim do ciclo
+                    </p>
+                  )}
+                </div>
+              )}
+            </>
+          );
+        })()}
+
+        <>
             {/* pockets grid */}
             <div className="flex items-center justify-between mb-1.5">
               <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>bolsos e cartões</p>
@@ -851,19 +1132,30 @@ export default function FinancesApp() {
                   const over = spent > p.limit;
                   const remaining = p.limit - spent;
                   const r = 26, circumference = 2 * Math.PI * r;
+                  const active = selectedPockets.includes(p.id);
                   return (
-                    <button
+                    <div
                       key={p.id}
-                      onClick={() => { setSelectedPockets([p.id]); setDashboardMode("detail"); }}
-                      className="rounded-2xl p-3 flex flex-col items-center gap-1.5 relative text-center"
-                      style={{ background: COLORS.paper, border: `1px solid ${p.id === primaryPocketId ? p.color || COLORS.brass : COLORS.line}` }}
+                      onClick={() => togglePocketFilter(p.id)}
+                      className="rounded-2xl p-3 flex flex-col items-center gap-1.5 relative text-center cursor-pointer"
+                      style={{ background: COLORS.paper, border: `1px solid ${active ? (p.color || COLORS.brass) : (p.id === primaryPocketId ? p.color || COLORS.brass : COLORS.line)}`, boxShadow: active ? `0 0 0 2px ${p.color || COLORS.brass}33` : "none" }}
                     >
+                      <div className="absolute top-1.5 left-1.5 flex gap-1">
+                        <button onClick={(e) => { e.stopPropagation(); setEditingPocket(p); }} aria-label="Editar bolso"
+                          className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.04)" }}>
+                          <Pencil size={10} style={{ color: COLORS.inkSoft }} />
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); deletePocket(p.id); }} aria-label="Remover bolso"
+                          className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: "rgba(0,0,0,0.04)" }}>
+                          <Trash2 size={10} style={{ color: COLORS.inkSoft }} />
+                        </button>
+                      </div>
                       {p.id === primaryPocketId && (
                         <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: p.color || COLORS.brass }}>
                           <Star size={9} color="#fff" fill="#fff" />
                         </span>
                       )}
-                      <svg width="58" height="58" viewBox="0 0 58 58">
+                      <svg width="58" height="58" viewBox="0 0 58 58" className="mt-2">
                         <circle cx="29" cy="29" r={r} fill="none" stroke={COLORS.line} strokeWidth="6" />
                         <circle cx="29" cy="29" r={r} fill="none" stroke={over ? COLORS.rust : (p.color || COLORS.brass)} strokeWidth="6"
                           strokeDasharray={circumference} strokeDashoffset={circumference - (pct / 100) * circumference}
@@ -876,264 +1168,364 @@ export default function FinancesApp() {
                       <p className="font-mono text-[10px]" style={{ color: over ? COLORS.rust : COLORS.inkSoft }}>
                         {over ? `estourou ${money(Math.abs(remaining), p.currency)}` : `faltam ${money(remaining, p.currency)}`}
                       </p>
-                    </button>
+                      {p.closingDay && (
+                        <p className="text-[9px]" style={{ color: COLORS.inkSoft }}>
+                          fecha {p.closingDay} · melhor dia: {p.closingDay === 31 ? 1 : p.closingDay + 1}
+                        </p>
+                      )}
+                    </div>
                   );
                 })}
               </div>
             )}
-
-            {/* investments */}
-            {investedAllTime > 0 && (
-              <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
-                <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>investimentos</p>
-                  <span className="w-2 h-2 rounded-full" style={{ background: "#5B8AC7" }} />
-                </div>
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className="text-[10px]" style={{ color: COLORS.inkSoft }}>investido este mês</p>
-                    <p className="font-mono text-base" style={{ color: "#5B8AC7" }}>{money(investedThisPeriod, primaryCurrency)}</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px]" style={{ color: COLORS.inkSoft }}>total guardado</p>
-                    <p className="font-mono text-sm" style={{ color: COLORS.ink }}>{money(investedAllTime, primaryCurrency)}</p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* essential vs superfluous */}
-            {essentialBreakdown.total > 0 && (
-              <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
-                <p className="text-xs uppercase tracking-wider mb-2" style={{ color: COLORS.inkSoft }}>essencial vs supérfluo</p>
-                <div className="w-full h-2.5 rounded-full overflow-hidden flex" style={{ background: COLORS.line }}>
-                  <div style={{ width: `${essentialBreakdown.essentialPct}%`, background: "#5C7A5A" }} />
-                  <div style={{ width: `${100 - essentialBreakdown.essentialPct}%`, background: COLORS.rust }} />
-                </div>
-                <div className="flex justify-between mt-1.5">
-                  <span className="text-[11px]" style={{ color: "#5C7A5A" }}>
-                    essencial: {Math.round(essentialBreakdown.essentialPct)}% · {money(essentialBreakdown.essential, primaryCurrency)}
-                  </span>
-                  <span className="text-[11px]" style={{ color: COLORS.rust }}>
-                    supérfluo: {Math.round(100 - essentialBreakdown.essentialPct)}% · {money(essentialBreakdown.superfluous, primaryCurrency)}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={() => setDashboardMode("detail")}
-              className="w-full flex items-center justify-center gap-1.5 rounded-full py-3 text-sm font-medium mb-4"
-              style={{ background: COLORS.brass, color: COLORS.paper }}
-            >
-              <Plus size={16} /> preencher / ver lançamentos
-            </button>
-          </>
-        )}
-
-        {dashboardMode === "detail" && (
-          <>
-            <button onClick={() => setDashboardMode("home")} className="flex items-center gap-1 mb-3 text-xs font-medium" style={{ color: COLORS.inkSoft }}>
-              <ChevronLeft size={14} /> voltar pro início
-            </button>
-
-        {/* pocket filter chips */}
-        {pockets.length > 0 && (
-          <>
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>cartões</p>
-              {selectedPockets.length > 0 && (
-                <button onClick={() => setSelectedPockets([])} className="text-[11px] font-medium" style={{ color: COLORS.brass }}>
-                  limpar filtro
-                </button>
-              )}
-            </div>
-            <div className="flex gap-1.5 mb-3 overflow-x-auto">
-              {pockets.map((p) => {
-                const active = selectedPockets.includes(p.id);
-                const c = p.color || COLORS.brass;
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => togglePocketFilter(p.id)}
-                    className="flex-shrink-0 flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
-                    style={{ background: active ? c : COLORS.paper, color: active ? "#fff" : COLORS.ink, border: `1px solid ${active ? c : COLORS.line}` }}
-                  >
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: active ? "#fff" : c }} />
-                    {p.name}
-                  </button>
-                );
-              })}
-            </div>
-          </>
-        )}
-
-        {/* category filter tags */}
-        <div className="flex items-center justify-between mb-1.5">
-          <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>categorias</p>
-          {selectedCategories.length > 0 && (
-            <button onClick={() => setSelectedCategories([])} className="text-[11px] font-medium" style={{ color: COLORS.brass }}>
-              limpar filtro
-            </button>
-          )}
-        </div>
-        <div className="flex gap-1.5 mb-2 overflow-x-auto">
-          {categories.map((cat) => {
-            const active = selectedCategories.includes(cat.name);
-            return (
-              <button
-                key={cat.name}
-                onClick={() => toggleCategory(cat.name)}
-                className="flex-shrink-0 rounded-full px-3 py-1.5 text-xs font-medium"
-                style={{ background: active ? COLORS.brass : COLORS.paper, color: active ? COLORS.paper : COLORS.ink, border: `1px solid ${active ? COLORS.brass : COLORS.line}` }}
-              >
-                {cat.name}
+            {selectedPockets.length > 0 && (
+              <button onClick={() => setSelectedPockets([])} className="text-[11px] font-medium mb-3 block" style={{ color: COLORS.brass }}>
+                limpar filtro de cartão
               </button>
-            );
-          })}
-        </div>
-
-        {selectedCategories.length > 0 && (
-          <div className="rounded-2xl p-4 mb-3" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
-            <p className="text-[10px] uppercase tracking-wider mb-2" style={{ color: COLORS.inkSoft }}>por categoria (%)</p>
-            {Object.entries(byCategoryByCurrency[primaryCurrency] ? byCategoryByCurrency[primaryCurrency].filter((c) => selectedCategories.includes(c.name)) : []).length === 0 ? (
-              <p className="text-xs" style={{ color: COLORS.inkSoft }}>Sem gastos nessas categorias neste mês.</p>
-            ) : (
-              (byCategoryByCurrency[primaryCurrency] || [])
-                .filter((c) => selectedCategories.includes(c.name))
-                .map((c, i) => {
-                  const totalCat = (byCategoryByCurrency[primaryCurrency] || []).reduce((s, x) => s + x.value, 0) || 1;
-                  const pct = Math.round((c.value / totalCat) * 100);
-                  return (
-                    <div key={i} className="mb-2 last:mb-0">
-                      <div className="flex justify-between text-xs mb-0.5">
-                        <span>{c.name}</span>
-                        <span className="font-mono">{pct}% · {money(c.value, primaryCurrency)}</span>
-                      </div>
-                      <div className="w-full h-1.5 rounded-full" style={{ background: COLORS.line }}>
-                        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: categoryColor(categories, c.name) }} />
-                      </div>
-                    </div>
-                  );
-                })
             )}
-          </div>
-        )}
 
-        {/* contas a pagar */}
-        <div className="flex items-center justify-between mb-1.5">
-          <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>contas a pagar</p>
-          <button onClick={() => setShowAddBill(true)} className="text-[11px] font-medium" style={{ color: COLORS.brass }}>
-            + nova conta
-          </button>
-        </div>
-        {bills.length === 0 ? (
-          <div className="rounded-xl border border-dashed p-4 text-center mb-4" style={{ borderColor: COLORS.line }}>
-            <p className="text-xs" style={{ color: COLORS.inkSoft }}>Nenhuma conta cadastrada. Adicione luz, aluguel, boletos etc.</p>
-          </div>
-        ) : (
-          <div className="rounded-2xl p-2 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
-            {bills
-              .slice()
-              .sort((a, b) => a.dueDay - b.dueDay)
-              .map((b) => {
-                const paid = (b.paidMonths || []).includes(currentKey);
-                const daysUntil = isCurrentMonth ? b.dueDay - today.getDate() : null;
-                const overdue = !paid && isCurrentMonth && daysUntil < 0;
-                return (
-                  <div key={b.id} className="flex items-center gap-2.5 px-2 py-2 rounded-xl" style={{ background: overdue ? `${COLORS.rust}14` : "transparent" }}>
-                    <button
-                      onClick={() => toggleBillPaid(b.id, currentKey)}
-                      className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
-                      style={{ background: paid ? "#5C7A5A" : "transparent", border: `1.5px solid ${paid ? "#5C7A5A" : COLORS.line}` }}
-                      aria-label={paid ? "Marcar como não paga" : "Marcar como paga"}
-                    >
-                      {paid && <Check size={12} color="#fff" />}
-                    </button>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium truncate" style={{ textDecoration: paid ? "line-through" : "none", color: paid ? COLORS.inkSoft : COLORS.ink }}>
-                        {b.name}
-                      </p>
-                      <p className="text-[10px]" style={{ color: overdue ? COLORS.rust : COLORS.inkSoft }}>
-                        {overdue ? `venceu dia ${b.dueDay}` : `vence dia ${b.dueDay}`}
-                        {isCurrentMonth && !paid && daysUntil >= 0 ? ` · faltam ${daysUntil} ${daysUntil === 1 ? "dia" : "dias"}` : ""}
-                      </p>
-                    </div>
-                    <span className="font-mono text-xs flex-shrink-0" style={{ color: COLORS.ink }}>{money(b.amount, b.currency)}</span>
-                    <button onClick={() => setEditingBill(b)} aria-label="Editar conta" className="flex-shrink-0">
-                      <Pencil size={12} style={{ color: COLORS.inkSoft }} />
-                    </button>
-                    <button onClick={() => deleteBill(b.id)} aria-label="Remover conta" className="flex-shrink-0">
-                      <Trash2 size={12} style={{ color: COLORS.inkSoft }} />
-                    </button>
-                  </div>
-                );
-              })}
-          </div>
-        )}
-
-        {/* biggest expense highlight */}
-        {biggestExpense && (
-          <div className="flex items-center gap-2 mb-4 rounded-lg px-3 py-2.5" style={{ background: `${COLORS.rust}14`, border: `1px solid ${COLORS.rust}33` }}>
-            <Flame size={14} style={{ color: COLORS.rust }} />
-            <p className="text-xs" style={{ color: COLORS.rust }}>
-              maior gasto do mês: {biggestExpense.description || biggestExpense.category} · {money(biggestExpense.amount, biggestExpense.currency)}
-            </p>
-          </div>
-        )}
-
-        {/* add transaction button */}
-        <button
-          onClick={() => setShowAddTx(true)}
-          className="w-full flex items-center justify-center gap-1.5 rounded-full py-3 text-sm font-medium mb-4"
-          style={{ background: COLORS.brass, color: COLORS.paper }}
-        >
-          <Plus size={16} /> novo lançamento
-        </button>
-
-        {/* transaction feed */}
-        <div className="rounded-2xl p-4 mb-10" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
-          <p className="text-xs uppercase tracking-wider mb-3" style={{ color: COLORS.inkSoft }}>
-            lançamentos {selectedCategories.length > 0 ? "filtrados" : "do mês"}
-          </p>
-          {filteredMonthTx.length === 0 ? (
-            <p className="text-sm py-4 text-center" style={{ color: COLORS.inkSoft }}>Nada por aqui ainda.</p>
-          ) : (
-            <div className="divide-y" style={{ borderColor: COLORS.line }}>
-              {filteredMonthTx
-                .slice()
-                .sort((a, b) => b.date.localeCompare(a.date))
-                .map((t) => {
-                  const pocket = pockets.find((p) => p.id === t.pocketId);
-                  const isInc = t.type === "income";
-                  const isInv = t.type === "investment";
-                  return (
-                    <div key={t.id} className="flex items-center justify-between py-2.5">
-                      <div className="flex items-center gap-3">
-                        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: isInc ? "#5C7A5A" : isInv ? "#5B8AC7" : categoryColor(categories, t.category) }} />
-                        <div>
-                          <p className="text-sm">{t.description || t.category}</p>
-                          <p className="text-[11px]" style={{ color: COLORS.inkSoft }}>
-                            {t.category} · {t.paymentMethod || (pocket ? pocket.name : "—")}{pocket && t.paymentMethod ? ` · ${pocket.name}` : ""} · {t.date.split("-").reverse().join("/")}
+            {/* contas a pagar */}
+            <p className="text-xs uppercase tracking-wider mb-1.5" style={{ color: COLORS.inkSoft }}>contas a pagar</p>
+            {bills.length === 0 ? (
+              <div className="rounded-xl border border-dashed p-4 text-center mb-4" style={{ borderColor: COLORS.line }}>
+                <p className="text-xs" style={{ color: COLORS.inkSoft }}>Nenhuma conta cadastrada. Adicione luz, aluguel, boletos etc.</p>
+              </div>
+            ) : (
+              <div className="rounded-2xl p-2 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+                {bills
+                  .slice()
+                  .sort((a, b) => a.dueDay - b.dueDay)
+                  .map((b) => {
+                    const paid = (b.paidMonths || []).includes(currentKey);
+                    const daysUntil = isCurrentMonth ? b.dueDay - today.getDate() : null;
+                    const realPaid = (b.paidMonths || []).includes(monthKey(today.getFullYear(), today.getMonth()));
+                    const overdue = !realPaid && (b.dueDay - today.getDate()) < 0;
+                    return (
+                      <div key={b.id} className="flex items-center gap-2.5 px-2 py-2 rounded-xl" style={{ background: overdue ? `${COLORS.rust}14` : "transparent" }}>
+                        <button
+                          onClick={() => toggleBillPaid(b.id, currentKey)}
+                          className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
+                          style={{ background: paid ? "#5C7A5A" : "transparent", border: `1.5px solid ${paid ? "#5C7A5A" : COLORS.line}` }}
+                          aria-label={paid ? "Marcar como não paga" : "Marcar como paga"}
+                        >
+                          {paid && <Check size={12} color="#fff" />}
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium truncate" style={{ textDecoration: paid ? "line-through" : "none", color: paid ? COLORS.inkSoft : COLORS.ink }}>
+                            {b.name}
+                          </p>
+                          <p className="text-[10px]" style={{ color: overdue ? COLORS.rust : COLORS.inkSoft }}>
+                            {overdue ? `venceu dia ${b.dueDay}` : `vence dia ${b.dueDay}`}
+                            {isCurrentMonth && !paid && daysUntil >= 0 ? ` · faltam ${daysUntil} ${daysUntil === 1 ? "dia" : "dias"}` : ""}
                           </p>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-sm" style={{ color: isInc ? "#5C7A5A" : isInv ? "#5B8AC7" : COLORS.ink }}>
-                          {isInc ? "+" : isInv ? "→" : ""}{money(t.amount, t.currency)}
-                        </span>
-                        <button onClick={() => deleteTransaction(t.id)} aria-label="Remover lançamento">
-                          <Trash2 size={13} style={{ color: COLORS.inkSoft }} />
+                        <span className="font-mono text-xs flex-shrink-0" style={{ color: COLORS.ink }}>{money(b.amount, b.currency)}</span>
+                        <button onClick={() => setEditingBill(b)} aria-label="Editar conta" className="flex-shrink-0">
+                          <Pencil size={12} style={{ color: COLORS.inkSoft }} />
                         </button>
+                        <button onClick={() => deleteBill(b.id)} aria-label="Remover conta" className="flex-shrink-0">
+                          <Trash2 size={12} style={{ color: COLORS.inkSoft }} />
+                        </button>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+            {/* investimentos */}
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>investimentos</p>
+              <button onClick={() => setShowGoalEdit(true)} className="text-[11px] font-medium" style={{ color: COLORS.brass }}>
+                {profile.investmentGoal > 0 ? "editar meta" : "+ definir meta"}
+              </button>
+            </div>
+
+            {profile.investmentGoal > 0 ? (
+              <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Target size={13} color={COLORS.brass} />
+                  <p className="text-[10px] uppercase tracking-wide" style={{ color: COLORS.inkSoft }}>meta de investimento</p>
+                  {investmentTrend !== null && (
+                    <span className="ml-auto flex items-center gap-1">
+                      {investmentTrend >= 0
+                        ? <TrendingUp size={11} color="#5C7A5A" />
+                        : <TrendingDown size={11} color={COLORS.rust} />}
+                      <span className="text-[10px]" style={{ color: investmentTrend >= 0 ? "#5C7A5A" : COLORS.rust }}>
+                        {investmentTrend >= 0 ? "+" : ""}{investmentTrend}%
+                      </span>
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-end justify-between mb-2">
+                  <p className="font-display text-2xl" style={{ color: COLORS.ink }}>
+                    {valuesHidden ? "••••" : money(investedThisPeriod, primaryCurrency)}
+                    <span className="font-body text-xs" style={{ color: COLORS.inkSoft }}> de {valuesHidden ? "••••" : money(profile.investmentGoal, primaryCurrency)}</span>
+                  </p>
+                  <span className="font-mono text-xs" style={{ color: COLORS.brass }}>
+                    {Math.round(Math.min(100, (investedThisPeriod / profile.investmentGoal) * 100))}%
+                  </span>
+                </div>
+                <div className="w-full h-2.5 rounded-full" style={{ background: COLORS.line }}>
+                  <div className="h-full rounded-full" style={{ width: `${Math.min(100, (investedThisPeriod / profile.investmentGoal) * 100)}%`, background: COLORS.brass }} />
+                </div>
+                <p className="text-[10px] mt-2" style={{ color: COLORS.inkSoft }}>
+                  {investedThisPeriod >= profile.investmentGoal
+                    ? "meta batida esse mês! 🎉"
+                    : `faltam ${valuesHidden ? "••••" : money(profile.investmentGoal - investedThisPeriod, primaryCurrency)} pra bater a meta do mês`}
+                </p>
+
+                <div className="flex justify-between mt-3 pt-3" style={{ borderTop: `1px solid ${COLORS.line}` }}>
+                  <span className="text-[10px]" style={{ color: COLORS.inkSoft }}>total guardado</span>
+                  <span className="font-mono text-[10px]" style={{ color: COLORS.ink }}>
+                    {valuesHidden ? "••••" : money(investedAllTime, primaryCurrency)}
+                  </span>
+                </div>
+
+                {recentInvestments.length > 0 && (
+                  <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${COLORS.line}` }}>
+                    <p className="text-[10px] mb-1.5" style={{ color: COLORS.inkSoft }}>últimos investimentos</p>
+                    {recentInvestments.map((t) => (
+                      <div key={t.id} className="flex justify-between text-xs py-0.5">
+                        <span style={{ color: COLORS.inkSoft }}>{t.description || t.category} · {t.date.split("-").reverse().join("/")}</span>
+                        <span className="font-mono" style={{ color: COLORS.brass }}>{valuesHidden ? "••••" : money(t.amount, t.currency)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-2xl p-4 mb-4 text-center" style={{ background: COLORS.paper, border: `1px dashed ${COLORS.line}` }}>
+                <Target size={20} className="mx-auto mb-1.5" style={{ color: COLORS.inkSoft }} />
+                <p className="text-xs mb-2" style={{ color: COLORS.inkSoft }}>
+                  Você já guardou {valuesHidden ? "••••" : money(investedAllTime, primaryCurrency)} no total. Que tal definir uma meta mensal?
+                </p>
+                <button
+                  onClick={() => setShowGoalEdit(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-medium"
+                  style={{ background: COLORS.brass, color: COLORS.paper }}
+                >
+                  <Plus size={14} /> definir meta
+                </button>
+              </div>
+            )}
+
+            {/* cotações do dia */}
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>cotações do dia</p>
+              <button onClick={() => fetchQuotes(["USD", "EUR", "BTC", ...extraQuoteCodes])} disabled={quotesLoading}
+                className="text-[11px] font-medium disabled:opacity-50" style={{ color: COLORS.brass }}>
+                {quotesLoading ? "atualizando..." : "atualizar"}
+              </button>
+            </div>
+            <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+              <div className="flex gap-2 mb-3">
+                <input
+                  value={quoteSearch}
+                  onChange={(e) => setQuoteSearch(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") searchQuote(); }}
+                  placeholder="Buscar moeda (ex: GBP, JPY, ETH)"
+                  style={{ ...getInputStyle(COLORS), flex: 1 }}
+                />
+                <button onClick={searchQuote} className="w-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: COLORS.brass }}>
+                  <Search size={14} color={COLORS.paper} />
+                </button>
+              </div>
+
+              {quotesError && (
+                <p className="text-xs mb-2" style={{ color: COLORS.rust }}>{quotesError}</p>
+              )}
+
+              {Object.keys(quotes).length === 0 && !quotesLoading && !quotesError && (
+                <p className="text-xs text-center py-2" style={{ color: COLORS.inkSoft }}>Nenhuma cotação carregada ainda.</p>
+              )}
+
+              <div className="space-y-2">
+                {Object.values(quotes).map((q) => {
+                  const change = Number(q.pctChange);
+                  const up = change >= 0;
+                  return (
+                    <div key={q.code} className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-medium">{q.code} / BRL</p>
+                        <p className="text-[10px]" style={{ color: COLORS.inkSoft }}>{q.name}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-mono text-sm">{money(Number(q.bid), "BRL")}</p>
+                        <p className="text-[10px] font-mono" style={{ color: up ? "#5C7A5A" : COLORS.rust }}>
+                          {up ? "+" : ""}{change}%
+                        </p>
                       </div>
                     </div>
                   );
                 })}
+              </div>
+              <p className="text-[9px] mt-3" style={{ color: COLORS.inkSoft }}>
+                Cotações via AwesomeAPI, com pequeno atraso em relação ao mercado.
+              </p>
             </div>
-          )}
-        </div>
+
+            {/* biggest expense highlight */}
+            {biggestExpense && (
+              <div className="flex items-center gap-2 mb-4 rounded-lg px-3 py-2.5" style={{ background: `${COLORS.rust}14`, border: `1px solid ${COLORS.rust}33` }}>
+                <Flame size={14} style={{ color: COLORS.rust }} />
+                <p className="text-xs" style={{ color: COLORS.rust }}>
+                  maior gasto do mês: {biggestExpense.description || biggestExpense.category} · {money(biggestExpense.amount, biggestExpense.currency)}
+                </p>
+              </div>
+            )}
           </>
-        )}
+
+        {(() => {
+          const saldo = totalIncomePrimary - totalOut;
+
+          const allTx = filteredMonthTx.filter((t) => {
+            if (typeFilter === "all") return true;
+            return (t.type || "expense") === typeFilter;
+          });
+
+          return (
+            <>
+              {/* análises — bloco secundário, agrupado e mais discreto */}
+              {(essentialBreakdown.total > 0 || (byCategoryByCurrency[primaryCurrency] || []).length > 0) && (
+                <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}`, opacity: 0.92 }}>
+                  <p className="text-[10px] uppercase tracking-widest mb-3" style={{ color: COLORS.inkSoft }}>análises</p>
+
+                  {essentialBreakdown.total > 0 && (
+                    <div className="mb-3 pb-3" style={{ borderBottom: `1px solid ${COLORS.line}` }}>
+                      <p className="text-[10px] mb-1.5" style={{ color: COLORS.inkSoft }}>fixo vs variável</p>
+                      <div className="w-full h-2 rounded-full overflow-hidden flex" style={{ background: COLORS.line }}>
+                        <div style={{ width: `${essentialBreakdown.essentialPct}%`, background: "#5C7A5A" }} />
+                        <div style={{ width: `${100 - essentialBreakdown.essentialPct}%`, background: COLORS.rust }} />
+                      </div>
+                      <div className="flex justify-between mt-1">
+                        <span className="text-[10px]" style={{ color: "#5C7A5A" }}>
+                          fixo {Math.round(essentialBreakdown.essentialPct)}%
+                        </span>
+                        <span className="text-[10px]" style={{ color: COLORS.rust }}>
+                          variável {Math.round(100 - essentialBreakdown.essentialPct)}%
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {(byCategoryByCurrency[primaryCurrency] || []).length > 0 && (
+                    <div>
+                      <p className="text-[10px] mb-1.5" style={{ color: COLORS.inkSoft }}>gastos por categoria</p>
+                      {(byCategoryByCurrency[primaryCurrency] || [])
+                        .slice()
+                        .sort((a, b) => b.value - a.value)
+                        .slice(0, 5)
+                        .map((c, i) => {
+                          const totalCat = (byCategoryByCurrency[primaryCurrency] || []).reduce((s, x) => s + x.value, 0) || 1;
+                          const pct = Math.round((c.value / totalCat) * 100);
+                          return (
+                            <div key={i} className="mb-1.5 last:mb-0">
+                              <div className="flex justify-between text-[10px] mb-0.5">
+                                <span style={{ color: COLORS.inkSoft }}>{c.name}</span>
+                                <span className="font-mono" style={{ color: COLORS.inkSoft }}>{pct}% · {money(c.value, primaryCurrency)}</span>
+                              </div>
+                              <div className="w-full h-1 rounded-full" style={{ background: COLORS.line }}>
+                                <div className="h-full rounded-full" style={{ width: `${pct}%`, background: categoryColor(categories, c.name) }} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* extrato completo abaixo */}
+              <p className="text-xs uppercase tracking-wider mb-2" style={{ color: COLORS.inkSoft }}>extrato completo</p>
+
+              {/* filtro por tipo */}
+              <div className="flex gap-1.5 mb-3 overflow-x-auto">
+                {[
+                  { id: "all", label: "Todos", color: COLORS.brass },
+                  { id: "expense", label: "Despesas", color: COLORS.rust },
+                  { id: "income", label: "Receitas", color: "#5C7A5A" },
+                  { id: "investment", label: "Investimentos", color: "#5B8AC7" },
+                ].map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setTypeFilter(f.id)}
+                    className="flex-shrink-0 rounded-full px-3 py-1.5 text-xs font-medium"
+                    style={{ background: typeFilter === f.id ? f.color : COLORS.paper, color: typeFilter === f.id ? "#fff" : COLORS.ink, border: `1px solid ${typeFilter === f.id ? f.color : COLORS.line}` }}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* filtro por categoria */}
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-xs uppercase tracking-wider" style={{ color: COLORS.inkSoft }}>categorias</p>
+                {selectedCategories.length > 0 && (
+                  <button onClick={() => setSelectedCategories([])} className="text-[11px] font-medium" style={{ color: COLORS.brass }}>
+                    limpar filtro
+                  </button>
+                )}
+              </div>
+              <div className="flex gap-1.5 mb-4 overflow-x-auto">
+                {categories.map((cat) => {
+                  const active = selectedCategories.includes(cat.name);
+                  return (
+                    <button
+                      key={cat.name}
+                      onClick={() => toggleCategory(cat.name)}
+                      className="flex-shrink-0 rounded-full px-3 py-1.5 text-xs font-medium"
+                      style={{ background: active ? COLORS.brass : COLORS.paper, color: active ? COLORS.paper : COLORS.ink, border: `1px solid ${active ? COLORS.brass : COLORS.line}` }}
+                    >
+                      {cat.name}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* extrato único */}
+              <div className="rounded-2xl p-4 mb-10" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+                <p className="text-xs uppercase tracking-wider mb-3" style={{ color: COLORS.inkSoft }}>
+                  extrato {typeFilter !== "all" || selectedCategories.length > 0 ? "filtrado" : "do período"}
+                </p>
+                {allTx.length === 0 ? (
+                  <p className="text-sm py-4 text-center" style={{ color: COLORS.inkSoft }}>Nada por aqui ainda.</p>
+                ) : (
+                  <div className="divide-y" style={{ borderColor: COLORS.line }}>
+                    {allTx
+                      .slice()
+                      .sort((a, b) => b.date.localeCompare(a.date))
+                      .map((t) => {
+                        const pocket = pockets.find((p) => p.id === t.pocketId);
+                        const isInc = t.type === "income";
+                        const isInv = t.type === "investment";
+                        return (
+                          <div key={t.id} className="flex items-center justify-between py-2.5">
+                            <div className="flex items-center gap-3">
+                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: isInc ? "#5C7A5A" : isInv ? "#5B8AC7" : categoryColor(categories, t.category) }} />
+                              <div>
+                                <p className="text-sm">{t.description || t.category}</p>
+                                <p className="text-[11px]" style={{ color: COLORS.inkSoft }}>
+                                  {t.category} · {t.paymentMethod || (pocket ? pocket.name : "—")}{pocket && t.paymentMethod ? ` · ${pocket.name}` : ""} · {t.date.split("-").reverse().join("/")}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="font-mono text-sm" style={{ color: isInc ? "#5C7A5A" : isInv ? "#5B8AC7" : COLORS.ink }}>
+                                {isInc ? "+" : isInv ? "→" : ""}{money(t.amount, t.currency)}
+                              </span>
+                              <button onClick={() => deleteTransaction(t.id)} aria-label="Remover lançamento">
+                                <Trash2 size={13} style={{ color: COLORS.inkSoft }} />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+            </>
+          );
+        })()}
       </div>
       )}
 
@@ -1152,7 +1544,46 @@ export default function FinancesApp() {
             currencies: Array.from(new Set(pockets.map((p) => p.currency || "BRL"))),
           }}
           onClearData={clearAllData}
+          onExportData={exportData}
+          onImportData={importData}
         />
+      )}
+
+      {/* floating add button */}
+      {view === "dashboard" && (
+        <div className="fixed right-4 z-40 flex flex-col items-end gap-2.5" style={{ bottom: 72 }}>
+          {[
+            { id: "invest", label: "Investimento", icon: TrendingUp, color: "#5B8AC7", action: () => { setQuickAddType("investment"); setDefaultPaymentMethod("Pix"); setTxConfig({ allowedTypes: ["investment"], lockPaymentMethod: true }); setShowAddTx(true); setFabOpen(false); } },
+            { id: "pix", label: "Pix", icon: Wallet, color: "#5C7A5A", action: () => { setQuickAddType("expense"); setDefaultPaymentMethod("Pix"); setTxConfig({ allowedTypes: ["expense", "income"], lockPaymentMethod: false }); setShowAddTx(true); setFabOpen(false); } },
+            { id: "cartao", label: "Cartão", icon: CreditCard, color: COLORS.brass, action: () => { setQuickAddType("expense"); setDefaultPaymentMethod("Cartão de crédito"); setTxConfig({ allowedTypes: ["expense"], lockPaymentMethod: true }); setShowAddTx(true); setFabOpen(false); } },
+            { id: "conta", label: "Conta a pagar", icon: Calendar, color: COLORS.rust, action: () => { setShowAddBill(true); setFabOpen(false); } },
+          ].map((opt, i) => (
+            <button
+              key={opt.id}
+              onClick={opt.action}
+              className="flex items-center gap-2 rounded-full pl-3 pr-4 py-2.5 shadow-lg"
+              style={{
+                background: opt.color, color: "#fff",
+                transition: `all 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) ${fabOpen ? i * 0.05 : 0}s`,
+                opacity: fabOpen ? 1 : 0,
+                transform: fabOpen ? "translateY(0) scale(1)" : "translateY(12px) scale(0.85)",
+                pointerEvents: fabOpen ? "auto" : "none",
+              }}
+            >
+              <opt.icon size={15} />
+              <span className="text-xs font-medium">{opt.label}</span>
+            </button>
+          ))}
+
+          <button
+            onClick={() => setFabOpen((v) => !v)}
+            className="w-14 h-14 rounded-full flex items-center justify-center shadow-lg"
+            style={{ background: COLORS.brass }}
+            aria-label={fabOpen ? "Fechar opções" : "Adicionar"}
+          >
+            <Plus size={24} color={COLORS.paper} style={{ transition: "transform 0.25s ease", transform: fabOpen ? "rotate(45deg)" : "rotate(0deg)" }} />
+          </button>
+        </div>
       )}
 
       {/* bottom nav */}
@@ -1166,7 +1597,7 @@ export default function FinancesApp() {
             className="flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] font-medium"
             style={{ color: view === "dashboard" ? COLORS.brass : `${COLORS.paper}80` }}
           >
-            <LayoutGrid size={18} /> painel
+            <LayoutGrid size={18} /> início
           </button>
           <button
             onClick={() => setView("profile")}
@@ -1197,9 +1628,15 @@ export default function FinancesApp() {
           pockets={pockets}
           categories={categories}
           defaultPocketId={primaryPocketId}
-          defaultDate={today.toISOString().slice(0, 10)}
-          onClose={() => setShowAddTx(false)}
-          onSave={(t) => { addTransaction(t); setShowAddTx(false); }}
+          defaultDate={toLocalISO(today)}
+          defaultType={quickAddType}
+          defaultPaymentMethod={defaultPaymentMethod}
+          allowedTypes={txConfig.allowedTypes}
+          lockPaymentMethod={txConfig.lockPaymentMethod}
+          onAddCategory={addCategory}
+          onAddPocket={addPocket}
+          onClose={() => { setShowAddTx(false); setQuickAddType(null); setDefaultPaymentMethod(null); setTxConfig({ allowedTypes: null, lockPaymentMethod: false }); }}
+          onSave={(t) => { addTransaction(t); setShowAddTx(false); setQuickAddType(null); setDefaultPaymentMethod(null); setTxConfig({ allowedTypes: null, lockPaymentMethod: false }); }}
         />
       )}
       {(showAddBill || editingBill) && (
@@ -1213,15 +1650,41 @@ export default function FinancesApp() {
           }}
         />
       )}
+      {showGoalEdit && (
+        <GoalModal
+          COLORS={COLORS}
+          currentGoal={profile.investmentGoal}
+          currency={primaryCurrency}
+          onClose={() => setShowGoalEdit(false)}
+          onSave={(goal) => { updateProfile({ investmentGoal: goal }); setShowGoalEdit(false); }}
+        />
+      )}
     </div>
   );
 }
 
 // ---------- profile page ----------
-function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, onAddCategory, onDeleteCategory, onToggleEssential }) {
+function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, onAddCategory, onDeleteCategory, onToggleEssential, onExportData, onImportData }) {
   const [editing, setEditing] = useState(false);
+  const [showThemePicker, setShowThemePicker] = useState(false);
   const [nameDraft, setNameDraft] = useState(profile.name);
   const [newCategory, setNewCategory] = useState("");
+  const [importStatus, setImportStatus] = useState(null);
+  const [confirmImport, setConfirmImport] = useState(null);
+  const fileInputRef = useRef(null);
+
+  function handleFileChosen(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setConfirmImport(file);
+    e.target.value = "";
+  }
+
+  function runImport() {
+    const file = confirmImport;
+    setConfirmImport(null);
+    onImportData(file, (result) => setImportStatus(result));
+  }
 
   function saveName() {
     onSave({ name: nameDraft.trim() || "Minha conta" });
@@ -1271,11 +1734,17 @@ function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, 
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 relative">
                   <p className="font-display text-xl" style={{ color: COLORS.ink }}>{profile.name}</p>
                   <button onClick={() => { setNameDraft(profile.name); setEditing(true); }} aria-label="Editar nome">
                     <Pencil size={14} style={{ color: COLORS.inkSoft }} />
                   </button>
+                  <button
+                    onClick={() => setShowThemePicker((v) => !v)}
+                    className="w-5 h-5 rounded-full flex-shrink-0"
+                    style={{ background: COLORS.brass, border: `2px solid ${COLORS.paper}`, boxShadow: `0 0 0 1px ${COLORS.brass}` }}
+                    aria-label="Trocar cor do app"
+                  />
                 </div>
               )}
               <p className="text-xs mt-0.5" style={{ color: COLORS.inkSoft }}>
@@ -1284,6 +1753,44 @@ function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, 
             </div>
           </div>
         </div>
+
+        {showThemePicker && (
+          <div
+            className="absolute left-5 top-24 rounded-2xl p-3 z-30 shadow-lg"
+            style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}`, minWidth: 220 }}
+          >
+            <p className="text-[10px] uppercase tracking-wider mb-2" style={{ color: COLORS.inkSoft }}>tema do app</p>
+            <div className="grid grid-cols-3 gap-2">
+              {THEME_IDS.map((id) => {
+                const t = THEMES[id];
+                const selected = (profile.theme || "ledger") === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => { onSave({ theme: id }); setShowThemePicker(false); }}
+                    className="flex flex-col items-center gap-1"
+                    aria-label={t.name}
+                  >
+                    <span
+                      className="relative w-8 h-8 rounded-full"
+                      style={{
+                        background: `radial-gradient(circle at 30% 30%, ${t.panelSoft}, ${t.panel})`,
+                        boxShadow: selected ? `0 0 0 2px ${COLORS.paper}, 0 0 0 4px ${t.brass}` : "none",
+                      }}
+                    >
+                      {selected && (
+                        <span className="absolute inset-0 flex items-center justify-center">
+                          <Check size={13} color={t.brass} />
+                        </span>
+                      )}
+                    </span>
+                    <p className="text-[9px] text-center leading-tight" style={{ color: COLORS.inkSoft, maxWidth: 56 }}>{t.name}</p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="rounded-2xl p-4 mb-4" style={{ background: `radial-gradient(circle at 20% 20%, ${COLORS.panel}, ${COLORS.panelSoft} 65%)` }}>
@@ -1305,42 +1812,39 @@ function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, 
         </div>
       </div>
 
-      <div className="rounded-2xl p-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
-        <p className="text-xs uppercase tracking-wider mb-3" style={{ color: COLORS.inkSoft }}>tema do app</p>
-        <div className="grid grid-cols-3 gap-2.5">
-          {THEME_IDS.map((id) => {
-            const t = THEMES[id];
-            const selected = (profile.theme || "ledger") === id;
-            return (
-              <button
-                key={id}
-                onClick={() => onSave({ theme: id })}
-                className="relative rounded-xl p-2 text-left transition-all"
-                style={{
-                  background: t.page,
-                  border: selected ? `2px solid ${t.brass}` : "2px solid transparent",
-                  boxShadow: selected ? `0 0 0 1px ${t.brass}55` : "none",
-                }}
-              >
-                {selected && (
-                  <span className="absolute top-1.5 right-1.5 w-3.5 h-3.5 rounded-full flex items-center justify-center" style={{ background: t.brass }}>
-                    <Check size={9} color={t.page} />
-                  </span>
-                )}
-                <div className="rounded-lg h-6 mb-1.5 flex items-center px-1.5 gap-1"
-                  style={{ background: `radial-gradient(circle at 20% 20%, ${t.panel}, ${t.panelSoft} 65%)` }}>
-                  <span className="w-2 h-2 rounded-full" style={{ background: t.brass }} />
-                </div>
-                <p className="text-[10px] font-medium truncate" style={{ color: t.ink }}>{t.name}</p>
-              </button>
-            );
-          })}
+      <div className="rounded-2xl p-4 mb-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
+        <p className="text-xs uppercase tracking-wider mb-1" style={{ color: COLORS.inkSoft }}>backup dos dados</p>
+        <p className="text-[10px] mb-3" style={{ color: COLORS.inkSoft }}>
+          Seus dados ficam salvos só neste navegador. Faça backup de vez em quando pra não perder nada
+          se trocar de celular, limpar o navegador, ou algo assim.
+        </p>
+        <div className="flex gap-2">
+          <button
+            onClick={onExportData}
+            className="flex-1 rounded-full py-2.5 text-xs font-medium"
+            style={{ background: COLORS.brass, color: COLORS.paper }}
+          >
+            ⬇ exportar backup
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex-1 rounded-full py-2.5 text-xs font-medium"
+            style={{ background: "transparent", color: COLORS.brass, border: `1px solid ${COLORS.brass}` }}
+          >
+            ⬆ importar backup
+          </button>
+          <input ref={fileInputRef} type="file" accept="application/json,.json" onChange={handleFileChosen} className="hidden" />
         </div>
+        {importStatus && (
+          <p className="text-[11px] mt-2" style={{ color: importStatus.ok ? "#5C7A5A" : COLORS.rust }}>
+            {importStatus.message}
+          </p>
+        )}
       </div>
 
       <div className="rounded-2xl p-4 mt-4" style={{ background: COLORS.paper, border: `1px solid ${COLORS.line}` }}>
         <p className="text-xs uppercase tracking-wider mb-1" style={{ color: COLORS.inkSoft }}>categorias</p>
-        <p className="text-[10px] mb-3" style={{ color: COLORS.inkSoft }}>toque na palavra "essencial/supérfluo" pra alternar</p>
+        <p className="text-[10px] mb-3" style={{ color: COLORS.inkSoft }}>toque na palavra "fixo/variável" pra alternar</p>
         <div className="flex flex-wrap gap-2 mb-3">
           {categories.map((c) => (
             <span
@@ -1355,7 +1859,7 @@ function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, 
                 className="text-[9px] px-1.5 py-0.5 rounded-full"
                 style={{ background: c.essential !== false ? "#5C7A5A22" : `${COLORS.rust}22`, color: c.essential !== false ? "#5C7A5A" : COLORS.rust }}
               >
-                {c.essential !== false ? "essencial" : "supérfluo"}
+                {c.essential !== false ? "fixo" : "variável"}
               </button>
               <button onClick={() => onDeleteCategory(c.name)} aria-label={`Remover ${c.name}`}>
                 <X size={12} style={{ color: COLORS.inkSoft }} />
@@ -1376,6 +1880,28 @@ function ProfilePage({ profile, onSave, stats, onClearData, COLORS, categories, 
           </button>
         </form>
       </div>
+
+      {confirmImport && (
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ background: "rgba(22,35,63,0.6)" }}>
+          <div className="rounded-2xl w-full max-w-sm p-5" style={{ background: COLORS.paper }}>
+            <p className="font-display text-lg mb-2" style={{ color: COLORS.ink }}>Restaurar backup?</p>
+            <p className="text-sm mb-4" style={{ color: COLORS.inkSoft }}>
+              Isso vai substituir TODOS os dados atuais do app (bolsos, lançamentos, categorias, contas) pelos dados
+              do arquivo "{confirmImport.name}". Não dá pra desfazer. Tem certeza?
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirmImport(null)} className="flex-1 rounded-full py-2.5 text-sm font-medium"
+                style={{ background: COLORS.line, color: COLORS.ink }}>
+                Cancelar
+              </button>
+              <button onClick={runImport} className="flex-1 rounded-full py-2.5 text-sm font-medium"
+                style={{ background: COLORS.rust, color: "#fff" }}>
+                Sim, substituir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1472,20 +1998,48 @@ function addMonthsToDate(dateStr, n) {
   const target = new Date(y, m - 1 + n, 1);
   const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
   target.setDate(Math.min(d, lastDay));
-  return target.toISOString().slice(0, 10);
+  return toLocalISO(target);
 }
 
-function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, onClose, onSave, COLORS }) {
-  const [type, setType] = useState("expense");
+function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, defaultType, defaultPaymentMethod, allowedTypes, lockPaymentMethod, onAddCategory, onAddPocket, onClose, onSave, COLORS }) {
+  const types = allowedTypes || ["expense", "income", "investment"];
+  const [type, setType] = useState(defaultType || types[0]);
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState(categories[0]?.name || "");
   const [pocketId, setPocketId] = useState(defaultPocketId || pockets[0]?.id || "");
-  const [paymentMethod, setPaymentMethod] = useState(pockets.length ? "Cartão de crédito" : "Pix");
+  const [paymentMethod, setPaymentMethod] = useState(
+    defaultPaymentMethod || (defaultType && defaultType !== "expense" ? "Pix" : (pockets.length ? "Cartão de crédito" : "Pix"))
+  );
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(defaultDate);
   const [isInstallment, setIsInstallment] = useState(false);
   const [installments, setInstallments] = useState("2");
+  const [showNewCategory, setShowNewCategory] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [showNewPocket, setShowNewPocket] = useState(false);
+  const [newPocketName, setNewPocketName] = useState("");
+  const [newPocketLimit, setNewPocketLimit] = useState("");
   const inputStyle = getInputStyle(COLORS);
+
+  function submitNewCategory() {
+    const name = newCategoryName.trim();
+    if (!name) return;
+    onAddCategory(name);
+    setCategory(name);
+    setNewCategoryName("");
+    setShowNewCategory(false);
+  }
+
+  function submitNewPocket() {
+    const name = newPocketName.trim();
+    if (!name || !newPocketLimit) return;
+    const id = String(Date.now());
+    onAddPocket({ id, name, last4: "0000", limit: Number(newPocketLimit), currency: "BRL", closingDay: null });
+    setPocketId(id);
+    setNewPocketName("");
+    setNewPocketLimit("");
+    setShowNewPocket(false);
+  }
 
   const selectedPocket = pockets.find((p) => p.id === pocketId);
   const currency = selectedPocket?.currency || "BRL";
@@ -1526,48 +2080,92 @@ function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, o
   }
 
   return (
-    <ModalShell title={isIncome ? "Nova receita" : isInvestment ? "Novo investimento" : "Nova despesa"} onClose={onClose} COLORS={COLORS}>
+    <ModalShell title={isIncome ? "Nova entrada" : isInvestment ? "Novo investimento" : "Nova saída"} onClose={onClose} COLORS={COLORS}>
       <form onSubmit={submit} className="space-y-3">
-        <div className="flex rounded-full overflow-hidden" style={{ border: `1px solid ${COLORS.line}` }}>
-          <button type="button" onClick={() => setType("expense")}
-            className="flex-1 py-2 text-[11px] font-medium"
-            style={{ background: type === "expense" ? COLORS.brass : "transparent", color: type === "expense" ? COLORS.paper : COLORS.inkSoft }}>
-            despesa
-          </button>
-          <button type="button" onClick={() => setType("income")}
-            className="flex-1 py-2 text-[11px] font-medium"
-            style={{ background: isIncome ? "#5C7A5A" : "transparent", color: isIncome ? "#fff" : COLORS.inkSoft }}>
-            receita
-          </button>
-          <button type="button" onClick={() => setType("investment")}
-            className="flex-1 py-2 text-[11px] font-medium"
-            style={{ background: isInvestment ? "#5B8AC7" : "transparent", color: isInvestment ? "#fff" : COLORS.inkSoft }}>
-            investimento
-          </button>
-        </div>
+        {types.length > 1 && (
+          <div className="flex rounded-full overflow-hidden" style={{ border: `1px solid ${COLORS.line}` }}>
+            {types.includes("expense") && (
+              <button type="button" onClick={() => setType("expense")}
+                className="flex-1 py-2 text-[11px] font-medium"
+                style={{ background: type === "expense" ? COLORS.brass : "transparent", color: type === "expense" ? COLORS.paper : COLORS.inkSoft }}>
+                saída
+              </button>
+            )}
+            {types.includes("income") && (
+              <button type="button" onClick={() => setType("income")}
+                className="flex-1 py-2 text-[11px] font-medium"
+                style={{ background: isIncome ? "#5C7A5A" : "transparent", color: isIncome ? "#fff" : COLORS.inkSoft }}>
+                entrada
+              </button>
+            )}
+            {types.includes("investment") && (
+              <button type="button" onClick={() => setType("investment")}
+                className="flex-1 py-2 text-[11px] font-medium"
+                style={{ background: isInvestment ? "#5B8AC7" : "transparent", color: isInvestment ? "#fff" : COLORS.inkSoft }}>
+                investimento
+              </button>
+            )}
+          </div>
+        )}
 
+        {!lockPaymentMethod && (
         <Field label="Forma de pagamento" COLORS={COLORS}>
           <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} style={inputStyle}>
             {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </Field>
+        )}
 
         <Field label="Bolso / cartão (opcional)" COLORS={COLORS}>
-          <select value={pocketId} onChange={(e) => setPocketId(e.target.value)} style={inputStyle}>
-            <option value="">— nenhum —</option>
-            {pockets.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.currency || "BRL"})</option>)}
-          </select>
+          <div className="flex gap-2">
+            <select value={pocketId} onChange={(e) => setPocketId(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
+              <option value="">— nenhum —</option>
+              {pockets.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.currency || "BRL"})</option>)}
+            </select>
+            <button type="button" onClick={() => setShowNewPocket((v) => !v)}
+              className="w-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: COLORS.brass }}>
+              <Plus size={16} color={COLORS.paper} />
+            </button>
+          </div>
         </Field>
+        {showNewPocket && (
+          <div className="rounded-xl p-3 space-y-2" style={{ background: `${COLORS.brass}11`, border: `1px solid ${COLORS.line}` }}>
+            <input value={newPocketName} onChange={(e) => setNewPocketName(e.target.value)} placeholder="Nome do bolso"
+              style={inputStyle} />
+            <input value={newPocketLimit} onChange={(e) => setNewPocketLimit(e.target.value)} type="number" min="0" step="0.01"
+              placeholder="Limite mensal (R$)" style={inputStyle} />
+            <button type="button" onClick={submitNewPocket} className="w-full rounded-full py-2 text-xs font-medium"
+              style={{ background: COLORS.brass, color: COLORS.paper }}>
+              Criar bolso
+            </button>
+          </div>
+        )}
 
         <Field label={`Valor total (${CURRENCIES[currency].symbol})`} COLORS={COLORS}>
           <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="0" step="0.01"
             placeholder="89,90" className="input" style={inputStyle} autoFocus />
         </Field>
         <Field label="Categoria" COLORS={COLORS}>
-          <select value={category} onChange={(e) => setCategory(e.target.value)} style={inputStyle}>
-            {categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
-          </select>
+          <div className="flex gap-2">
+            <select value={category} onChange={(e) => setCategory(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
+              {categories.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+            </select>
+            <button type="button" onClick={() => setShowNewCategory((v) => !v)}
+              className="w-10 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: COLORS.brass }}>
+              <Plus size={16} color={COLORS.paper} />
+            </button>
+          </div>
         </Field>
+        {showNewCategory && (
+          <div className="rounded-xl p-3 flex gap-2" style={{ background: `${COLORS.brass}11`, border: `1px solid ${COLORS.line}` }}>
+            <input value={newCategoryName} onChange={(e) => setNewCategoryName(e.target.value)} placeholder="Nova categoria"
+              style={{ ...inputStyle, flex: 1 }} />
+            <button type="button" onClick={submitNewCategory} className="rounded-full px-3 text-xs font-medium flex-shrink-0"
+              style={{ background: COLORS.brass, color: COLORS.paper }}>
+              Criar
+            </button>
+          </div>
+        )}
         <Field label="Descrição (opcional)" COLORS={COLORS}>
           <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder={isIncome ? "Venda da loja, salário…" : "Mercado, uber…"}
             className="input" style={inputStyle} />
@@ -1599,7 +2197,7 @@ function TransactionModal({ pockets, categories, defaultDate, defaultPocketId, o
 
         <button type="submit" className="w-full mt-2 rounded-full py-2.5 text-sm font-medium"
           style={{ background: isIncome ? "#5C7A5A" : isInvestment ? "#5B8AC7" : COLORS.brass, color: "#fff" }}>
-          {isIncome ? "Adicionar receita" : isInvestment ? "Adicionar investimento" : (isInstallment ? "Adicionar parcelas" : "Adicionar despesa")}
+          {isIncome ? "Adicionar entrada" : isInvestment ? "Adicionar investimento" : (isInstallment ? "Adicionar parcelas" : "Adicionar saída")}
         </button>
       </form>
     </ModalShell>
@@ -1610,7 +2208,8 @@ function BillModal({ onClose, onSave, COLORS, initialBill }) {
   const [name, setName] = useState(initialBill?.name || "");
   const [amount, setAmount] = useState(initialBill ? String(initialBill.amount) : "");
   const [currency, setCurrency] = useState(initialBill?.currency || "BRL");
-  const [dueDay, setDueDay] = useState(initialBill?.dueDay ? String(initialBill.dueDay) : "");
+  const todayISO = toLocalISO(new Date());
+  const [dueDate, setDueDate] = useState(initialBill?.dueDate || todayISO);
   const [error, setError] = useState("");
   const inputStyle = getInputStyle(COLORS);
   const isEditing = !!initialBill;
@@ -1619,11 +2218,12 @@ function BillModal({ onClose, onSave, COLORS, initialBill }) {
     e.preventDefault();
     if (!name.trim()) { setError("Dá um nome pra essa conta."); return; }
     if (!amount || Number(amount) <= 0) { setError("Preenche o valor (precisa ser maior que zero)."); return; }
-    const dd = Math.min(31, Math.max(1, Number(dueDay) || 1));
+    if (!dueDate) { setError("Escolhe a data de vencimento."); return; }
+    const dd = Number(dueDate.split("-")[2]);
     setError("");
     onSave({
       id: initialBill?.id || String(Date.now()),
-      name: name.trim(), amount: Number(amount), currency, dueDay: dd,
+      name: name.trim(), amount: Number(amount), currency, dueDay: dd, dueDate,
       paidMonths: initialBill?.paidMonths || [],
     });
   }
@@ -1644,12 +2244,11 @@ function BillModal({ onClose, onSave, COLORS, initialBill }) {
           <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="0" step="0.01"
             placeholder="150" className="input" style={inputStyle} />
         </Field>
-        <Field label="Dia do vencimento" COLORS={COLORS}>
-          <input value={dueDay} onChange={(e) => setDueDay(e.target.value.replace(/\D/g, "").slice(0, 2))}
-            type="number" min="1" max="31" placeholder="Ex: 10" className="input" style={inputStyle} />
+        <Field label="Data de vencimento" COLORS={COLORS}>
+          <input value={dueDate} onChange={(e) => setDueDate(e.target.value)} type="date" style={inputStyle} />
         </Field>
         <p className="text-[11px]" style={{ color: COLORS.inkSoft }}>
-          Essa conta se repete todo mês. Você marca como paga direto na lista do painel.
+          Essa conta se repete todo mês, sempre no dia {dueDate ? Number(dueDate.split("-")[2]) : "—"}. Se passar dessa data sem marcar como paga, ela aparece em atraso. Você marca como paga direto na lista do painel.
         </p>
         {error && (
           <p className="text-xs" style={{ color: COLORS.rust }}>{error}</p>
@@ -1657,6 +2256,34 @@ function BillModal({ onClose, onSave, COLORS, initialBill }) {
         <button type="submit" className="w-full mt-2 rounded-full py-2.5 text-sm font-medium"
           style={{ background: COLORS.brass, color: COLORS.paper }}>
           {isEditing ? "Salvar alterações" : "Salvar conta"}
+        </button>
+      </form>
+    </ModalShell>
+  );
+}
+
+function GoalModal({ onClose, onSave, COLORS, currentGoal, currency }) {
+  const [goal, setGoal] = useState(currentGoal > 0 ? String(currentGoal) : "");
+  const inputStyle = getInputStyle(COLORS);
+
+  function submit(e) {
+    e.preventDefault();
+    onSave(Number(goal) || 0);
+  }
+
+  return (
+    <ModalShell title="Meta de investimento" onClose={onClose} COLORS={COLORS}>
+      <form onSubmit={submit} className="space-y-3">
+        <Field label={`Quanto você quer investir por mês (${CURRENCIES[currency].symbol})`} COLORS={COLORS}>
+          <input value={goal} onChange={(e) => setGoal(e.target.value)} type="number" min="0" step="0.01"
+            placeholder="500" className="input" style={inputStyle} autoFocus />
+        </Field>
+        <p className="text-[11px]" style={{ color: COLORS.inkSoft }}>
+          Isso mostra uma barrinha de progresso na seção de investimentos, comparando com o que você já guardou no mês. Deixa em branco ou zero pra remover a meta.
+        </p>
+        <button type="submit" className="w-full mt-2 rounded-full py-2.5 text-sm font-medium"
+          style={{ background: "#5B8AC7", color: "#fff" }}>
+          Salvar meta
         </button>
       </form>
     </ModalShell>
